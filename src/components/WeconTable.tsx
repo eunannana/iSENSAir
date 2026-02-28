@@ -27,7 +27,7 @@ export default function WeconTable({ initialArea }: Props) {
   const [showAI, setShowAI] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
+  const [refreshingLatest, setRefreshingLatest] = useState(false);
   const rowsPerPage = 25;
 
   const sensorKeys = [
@@ -131,9 +131,10 @@ export default function WeconTable({ initialArea }: Props) {
     }
   }
 
-  async function fetchLatest() {
+  async function fetchLatestSnapshot() {
     try {
-      console.log(`Fetching latest data for area: ${area}`);
+      setRefreshingLatest(true);
+
       const latestRecord = await fetchLatestData(area);
 
       if (latestRecord && typeof latestRecord === "object") {
@@ -141,12 +142,10 @@ export default function WeconTable({ initialArea }: Props) {
       } else {
         setLatestData([]);
       }
-    } catch (error: any) {
-      console.error("Error in fetchLatest:", error);
-      if (error.message && error.message.includes("Unsupported location")) {
-        setErrorMsg(`Area '${area}' belum didukung`);
-      }
-      setLatestData([]);
+    } catch (error) {
+      console.error("Error refreshing latest:", error);
+    } finally {
+      setRefreshingLatest(false);
     }
   }
 
@@ -182,7 +181,10 @@ export default function WeconTable({ initialArea }: Props) {
       try {
         await validateLocation(area);
 
-        await Promise.all([fetchHistorical(today, today), fetchLatest()]);
+        await Promise.all([
+          fetchHistorical(today, today),
+          fetchLatestSnapshot(),
+        ]);
       } catch (error: any) {
         if (error?.message && error.message.includes("Unsupported location")) {
           setErrorMsg(`Area '${area}' belum didukung`);
@@ -448,11 +450,13 @@ export default function WeconTable({ initialArea }: Props) {
       </div>
 
       {/* ===== LATEST SNAPSHOT ===== */}
+      {/* ===== LATEST SNAPSHOT ===== */}
       {!loading && latestRow && (
         <div className="max-w-6xl mx-auto px-4">
-          <div className="border rounded-2xl p-6 bg-white">
+          <div className="border rounded-2xl p-6 bg-white relative">
             <div className="flex justify-between mb-4">
               <h2 className="font-semibold text-gray-800">Latest Snapshot</h2>
+
               <span className="text-sm text-gray-500">
                 {latestRow.Timestamp}
               </span>
@@ -467,6 +471,24 @@ export default function WeconTable({ initialArea }: Props) {
                   roundValue={roundValue}
                 />
               ))}
+            </div>
+
+            {/* ===== REFRESH BUTTON ===== */}
+            <div className="absolute bottom-4 right-6">
+              <button
+                onClick={fetchLatestSnapshot}
+                disabled={refreshingLatest}
+                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700"
+              >
+                {refreshingLatest ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                    Refreshing...
+                  </>
+                ) : (
+                  <>🔄 Refresh Data</>
+                )}
+              </button>
             </div>
           </div>
         </div>
