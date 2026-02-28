@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
-import SftpClient from "ssh2-sftp-client";
-import { parse } from "csv-parse/sync";
+// import SftpClient from "ssh2-sftp-client";
+// import { parse } from "csv-parse/sync";
 
 export async function GET(request: Request) {
   const sftp = new SftpClient();
