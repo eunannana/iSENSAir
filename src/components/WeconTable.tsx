@@ -214,6 +214,30 @@ export default function WeconTable({ initialArea }: Props) {
 
     loadInitial();
   }, [area]);
+  /* ================= AUTO REFRESH LATEST ================= */
+
+useEffect(() => {
+  const interval = setInterval(async () => {
+    if (document.hidden) return; // tidak polling kalau tab tidak aktif
+
+    try {
+      const latestRecord = await fetchLatestData(area);
+
+      if (
+        latestRecord &&
+        latestData.length &&
+        latestRecord.Timestamp !== latestData[0]?.Timestamp
+      ) {
+        setLatestData([latestRecord]);
+      }
+    } catch (error) {
+      console.error("Auto refresh latest error:", error);
+    }
+  }, 60000); // setiap 60 detik
+
+  return () => clearInterval(interval);
+}, [area, latestData]);
+
 
   /* ================= SORT & FILTER ================= */
 
@@ -228,11 +252,11 @@ export default function WeconTable({ initialArea }: Props) {
     });
   }, [data, sortAsc]);
 
-  const latestRow = useMemo(() => {
-    // Filter latest data untuk yang punya valid sensor data
-    const validLatest = latestData.filter(hasValidSensorData);
-    return validLatest.length ? validLatest[0] : null;
-  }, [latestData]);
+ /* ================= LATEST ROW ================= */
+
+const latestRow = useMemo(() => {
+  return latestData.length ? latestData[0] : null;
+}, [latestData]);
 
   const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
@@ -466,48 +490,36 @@ export default function WeconTable({ initialArea }: Props) {
 
       {/* ===== LATEST SNAPSHOT ===== */}
       {/* ===== LATEST SNAPSHOT ===== */}
-      {!loading && latestRow && (
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="border rounded-2xl p-6 bg-white relative">
-            <div className="flex justify-between mb-4">
-              <h2 className="font-semibold text-gray-800">Latest Snapshot</h2>
+{!loading && latestRow && (
+  <div className="max-w-6xl mx-auto px-4">
+    <div className="border rounded-2xl p-6 bg-white">
 
-              <span className="text-sm text-gray-500">
-                {formatMalaysiaDateTime(latestRow.Timestamp)}
-              </span>
-            </div>
+      {/* Header */}
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="font-semibold text-gray-800">
+          Latest Snapshot
+        </h2>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {sensorKeys.map((key) => (
-                <DataCard
-                  key={key}
-                  sensorKey={key}
-                  value={latestRow[key]}
-                  roundValue={roundValue}
-                />
-              ))}
-            </div>
+        <span className="text-sm text-gray-500 whitespace-nowrap">
+          {formatMalaysiaDateTime(latestRow.Timestamp)}
+        </span>
+      </div>
 
-            {/* ===== REFRESH BUTTON ===== */}
-            <div className="absolute bottom-4 right-6">
-              <button
-                onClick={fetchLatestSnapshot}
-                disabled={refreshingLatest}
-                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700"
-              >
-                {refreshingLatest ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                    Refreshing...
-                  </>
-                ) : (
-                  <>🔄 Refresh Data</>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        {sensorKeys.map((key) => (
+          <DataCard
+            key={key}
+            sensorKey={key}
+            value={latestRow[key]}
+            roundValue={roundValue}
+          />
+        ))}
+      </div>
+
+    </div>
+  </div>
+)}
 
       {/* ===== TREND ===== */}
       {!loading && sortedData.length > 0 && (
