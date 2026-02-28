@@ -3,6 +3,25 @@
 
 const API_BASE = "https://isensair-backend.onrender.com";
 
+// perform fetch with simple retry/backoff to handle sleeping API
+async function fetchWithRetry(input: RequestInfo, init?: RequestInit, retries = 5, backoff = 1000): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await fetch(input, init);
+      if (!res.ok && [502, 503, 504].includes(res.status) && attempt < retries) {
+        // server not ready yet, fallthrough to retry
+      } else {
+        return res;
+      }
+    } catch (err) {
+      if (attempt >= retries) throw err;
+    }
+    attempt++;
+    await new Promise((r) => setTimeout(r, backoff * attempt));
+  }
+}
+
 // cache internal untuk daftar lokasi yang didukung
 let cachedLocations: string[] | null = null;
 
@@ -13,7 +32,7 @@ let cachedLocations: string[] | null = null;
 export async function fetchSupportedLocations(): Promise<string[]> {
   if (cachedLocations) return cachedLocations;
   const url = `${API_BASE}/`;
-  const res = await fetch(url);
+  const res = await fetchWithRetry(url);
   if (!res.ok) {
     throw new Error(`Failed to fetch supported locations: ${res.status}`);
   }
@@ -80,7 +99,7 @@ export async function fetchLatestData(location: string): Promise<SensorRecord | 
 
     console.log("Fetching latest data from:", url.toString());
 
-    const response = await fetch(url.toString());
+    const response = await fetchWithRetry(url.toString());
     
     if (!response.ok) {
       const errorText = await response.text();
@@ -135,7 +154,7 @@ export async function fetchDataByDateRange(
 
     console.log("Fetching data from:", url.toString());
 
-    const response = await fetch(url.toString());
+    const response = await fetchWithRetry(url.toString());
     
     if (!response.ok) {
       const errorText = await response.text();
