@@ -5,6 +5,7 @@ import Visualizations from "@/components/Visualizations";
 import OpenAIPanel from "@/components/openAIPanel";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { fetchLatestData, fetchDataByDateRange, validateLocation } from "@/lib/apiClient";
 
 type Props = {
   initialArea: string;
@@ -21,6 +22,7 @@ export default function WeconTable({ initialArea }: Props) {
   const [sortAsc, setSortAsc] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const rowsPerPage = 25;
 
@@ -36,11 +38,36 @@ export default function WeconTable({ initialArea }: Props) {
     "pH_Sensor",
   ];
 
+  // Fungsi untuk check apakah record punya minimal satu sensor value yang meaningful
+  function hasValidSensorData(record: any): boolean {
+    return sensorKeys.some(key => {
+      const val = record[key];
+      // Check apakah value adalah meaningful (bukan null, undefined, empty string, 0, atau NaN)
+      return val !== null && val !== undefined && val !== "" && val !== 0 && !isNaN(val);
+    });
+  }
+
+  // Fungsi untuk round angka ke 2 desimal
+  function roundValue(value: any): string {
+    if (value === null || value === undefined || value === "") return "-";
+    if (typeof value === "number") {
+      return value.toFixed(2);
+    }
+    const num = parseFloat(value);
+    return isNaN(num) ? String(value) : num.toFixed(2);
+  }
+
   /* ================= TIMESTAMP ================= */
 
   function parseTimestamp(ts: string) {
     if (!ts) return 0;
 
+    // Handle ISO format: "2026-03-01T01:47:18"
+    if (ts.includes("T")) {
+      return new Date(ts).getTime();
+    }
+
+    // Handle old format: "01/03/2026, 01:47:18" or "01/03/2026 01:47:18"
     const [datePart, timePart] =
       ts.includes(",")
         ? ts.split(",").map((s) => s.trim())
@@ -66,37 +93,52 @@ export default function WeconTable({ initialArea }: Props) {
   /* ================= FETCH ================= */
 
   async function fetchHistorical(fetchStart: string, fetchEnd: string) {
-    if (!fetchStart || !fetchEnd) return;
+    if (!fetchStart || !fetchEnd) {
+      console.warn("Missing start or end date", { fetchStart, fetchEnd });
+      return;
+    }
 
     setLoading(true);
+    setErrorMsg(null);
     try {
-      const res = await fetch(
-        `/api/wecon?start=${fetchStart}&end=${fetchEnd}&area=${area}`
-      );
-      const json = await res.json();
-      setData(json);
+      console.log(`Fetching data for area: ${area}, range: ${fetchStart} to ${fetchEnd}`);
+      const json = await fetchDataByDateRange(area, fetchStart, fetchEnd);
+      const arr = Array.isArray(json) ? json : [];
+      if (arr.length === 0) {
+        setErrorMsg("Tidak ada data dalam rentang tanggal");
+      }
+      setData(arr);
       setCurrentPage(1);
+    } catch (error: any) {
+      if (error.message && error.message.includes("Unsupported location")) {
+        setErrorMsg(`Area '${area}' belum didukung`);
+      } else {
+        console.error("Error in fetchHistorical:", error);
+        setErrorMsg("Gagal memuat data");
+      }
+      setData([]);
     } finally {
       setLoading(false);
     }
   }
 
   async function fetchLatest() {
-    const today = new Date().toISOString().split("T")[0];
-    const res = await fetch(
-      `/api/wecon?start=${today}&end=${today}&area=${area}`
-    );
-    const json = await res.json();
-
-    if (!json.length) return;
-
-    const sorted = [...json].sort(
-      (a, b) =>
-        parseTimestamp(b.Timestamp) -
-        parseTimestamp(a.Timestamp)
-    );
-
-    setLatestData(sorted);
+    try {
+      console.log(`Fetching latest data for area: ${area}`);
+      const latestRecord = await fetchLatestData(area);
+      
+      if (latestRecord && typeof latestRecord === 'object') {
+        setLatestData([latestRecord]);
+      } else {
+        setLatestData([]);
+      }
+    } catch (error: any) {
+      console.error("Error in fetchLatest:", error);
+      if (error.message && error.message.includes("Unsupported location")) {
+        setErrorMsg(`Area '${area}' belum didukung`);
+      }
+      setLatestData([]);
+    }
   }
 
   /* ================= FIRST LOAD ================= */
@@ -108,25 +150,48 @@ export default function WeconTable({ initialArea }: Props) {
 
     async function loadInitial() {
       setLoading(true);
-      await fetchHistorical(today, today);
-      await fetchLatest();
-      setLoading(false);
+      setErrorMsg(null);
+      try {
+        // validasi lokasi sebelum request
+        await validateLocation(area);
+
+        await Promise.all([
+          fetchHistorical(today, today),
+          fetchLatest()
+        ]);
+      } catch (error: any) {
+        // hanya tampilkan log jika bukan masalah lokasi
+        if (error.message && error.message.includes("Unsupported location")) {
+          setErrorMsg(`Area '${area}' belum didukung`);
+        } else {
+          console.error("Error during initial load:", error);
+        }
+      } finally {
+        setLoading(false);
+      }
     }
 
     loadInitial();
   }, [area]);
 
-  /* ================= SORT ================= */
+  /* ================= SORT & FILTER ================= */
 
   const sortedData = useMemo(() => {
-    return [...data].sort((a, b) => {
+    // Filter data yang kosong, hanya yang ada sensor values
+    const filtered = [...data].filter(hasValidSensorData);
+    
+    return filtered.sort((a, b) => {
       const timeA = parseTimestamp(a.Timestamp);
       const timeB = parseTimestamp(b.Timestamp);
       return sortAsc ? timeA - timeB : timeB - timeA;
     });
   }, [data, sortAsc]);
 
-  const latestRow = latestData.length ? latestData[0] : null;
+  const latestRow = useMemo(() => {
+    // Filter latest data untuk yang punya valid sensor data
+    const validLatest = latestData.filter(hasValidSensorData);
+    return validLatest.length ? validLatest[0] : null;
+  }, [latestData]);
 
   const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
@@ -179,7 +244,7 @@ export default function WeconTable({ initialArea }: Props) {
       head: [["Parameter", "Value"]],
       body: sensorKeys.map((k) => [
         k,
-        latestRow[k] ?? "-",
+        roundValue(latestRow[k]),
       ]),
       styles: { fontSize: 9 },
       theme: "grid",
@@ -218,7 +283,7 @@ export default function WeconTable({ initialArea }: Props) {
 
     const tableBody = sortedData.map((row) => [
       row.Timestamp,
-      ...sensorKeys.map((k) => row[k]),
+      ...sensorKeys.map((k) => roundValue(row[k])),
     ]);
 
     autoTable(pdf, {
@@ -262,6 +327,14 @@ export default function WeconTable({ initialArea }: Props) {
 
   return (
     <div className="mt-6 space-y-10">
+
+      {errorMsg && (
+        <div className="max-w-6xl mx-auto px-4">
+          <div className="bg-red-100 text-red-800 p-3 rounded mb-4">
+            {errorMsg}
+          </div>
+        </div>
+      )}
 
       {/* ===== FILTER ===== */}
       <div className="max-w-6xl mx-auto px-4">
@@ -325,6 +398,7 @@ export default function WeconTable({ initialArea }: Props) {
                   key={key}
                   sensorKey={key}
                   value={latestRow[key]}
+                  roundValue={roundValue}
                 />
               ))}
             </div>
@@ -389,7 +463,7 @@ export default function WeconTable({ initialArea }: Props) {
                     <td className="px-3 py-2">{row.Timestamp}</td>
                     {sensorKeys.map((key) => (
                       <td key={key} className="px-3 py-2">
-                        {row[key]}
+                        {roundValue(row[key])}
                       </td>
                     ))}
                   </tr>
@@ -424,9 +498,11 @@ export default function WeconTable({ initialArea }: Props) {
 function DataCard({
   sensorKey,
   value,
+  roundValue,
 }: {
   sensorKey: string;
   value: any;
+  roundValue: (val: any) => string;
 }) {
   const labels: Record<string, string> = {
     Tr_Sensor: "Turbidity",
@@ -446,7 +522,7 @@ function DataCard({
         {labels[sensorKey]}
       </p>
       <p className="text-xl font-semibold">
-        {value ?? "-"}
+        {roundValue(value)}
       </p>
     </div>
   );

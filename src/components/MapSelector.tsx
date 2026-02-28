@@ -8,6 +8,8 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { useEffect, useState } from "react";
+import { fetchSupportedLocations } from "@/lib/apiClient";
 
 type Props = {
   onSelect: (area: string) => void;
@@ -26,7 +28,7 @@ L.Icon.Default.mergeOptions({
 });
 
 /* ================= LOCATIONS ================= */
-const locations = [
+const allLocations = [
   {
     name: "semantan",
     label: "Semantan River",
@@ -47,7 +49,25 @@ const locations = [
   },
 ];
 
+
 export default function MapSelector({ onSelect }: Props) {
+  const [locations, setLocations] = useState<typeof allLocations>([]);
+
+  useEffect(() => {
+    fetchSupportedLocations()
+      .then((supported) => {
+        const lower = supported.map((s) => s.toLowerCase());
+        setLocations(
+          allLocations.filter((loc) => lower.includes(loc.name))
+        );
+      })
+      .catch((err) => {
+        console.error("Failed to fetch supported locations", err);
+        // fallback ke semua locations apabila error
+        setLocations(allLocations);
+      });
+  }, []);
+
   return (
     <div className="max-w-6xl mx-auto px-4 mt-12">
       <div className="rounded-3xl overflow-hidden shadow-xl border border-gray-200 bg-white">
