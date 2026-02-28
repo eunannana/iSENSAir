@@ -301,27 +301,92 @@ export default function WeconTable({ initialArea }: Props) {
 
   /* ================= PAGINATION ================= */
 
+  
+  /* ================= SMART PAGINATION ================= */
+
   function renderPagination() {
     if (totalPages <= 1) return null;
 
+    const maxVisible = 5;
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+
+    if (endPage - startPage < maxVisible - 1) {
+      startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+
+    const pages = [];
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(i);
+    }
+
     return (
-      <div className="flex justify-center gap-2 mt-6">
-        {Array.from({ length: totalPages }).map((_, i) => (
+      <div className="flex items-center justify-center gap-2 mt-6 flex-wrap">
+
+        {/* PREV */}
+        <button
+          disabled={currentPage === 1}
+          onClick={() => setCurrentPage((p) => p - 1)}
+          className="px-3 py-1 border rounded disabled:opacity-40"
+        >
+          Prev
+        </button>
+
+        {/* FIRST + DOTS */}
+        {startPage > 1 && (
+          <>
+            <button
+              onClick={() => setCurrentPage(1)}
+              className="px-3 py-1 border rounded"
+            >
+              1
+            </button>
+            {startPage > 2 && <span className="px-2">...</span>}
+          </>
+        )}
+
+        {/* MAIN PAGES */}
+        {pages.map((page) => (
           <button
-            key={i}
-            onClick={() => setCurrentPage(i + 1)}
-            className={`px-3 py-1 rounded text-sm ${
-              currentPage === i + 1
+            key={page}
+            onClick={() => setCurrentPage(page)}
+            className={`px-3 py-1 rounded ${
+              currentPage === page
                 ? "bg-blue-600 text-white"
-                : "bg-white border"
+                : "border"
             }`}
           >
-            {i + 1}
+            {page}
           </button>
         ))}
+
+        {/* LAST + DOTS */}
+        {endPage < totalPages && (
+          <>
+            {endPage < totalPages - 1 && (
+              <span className="px-2">...</span>
+            )}
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              className="px-3 py-1 border rounded"
+            >
+              {totalPages}
+            </button>
+          </>
+        )}
+
+        {/* NEXT */}
+        <button
+          disabled={currentPage === totalPages}
+          onClick={() => setCurrentPage((p) => p + 1)}
+          className="px-3 py-1 border rounded disabled:opacity-40"
+        >
+          Next
+        </button>
       </div>
     );
   }
+
 
   /* ================= UI ================= */
 
