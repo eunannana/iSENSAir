@@ -1,33 +1,59 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useState } from "react";
+import dynamic from "next/dynamic";
 import HeroHeader from "@/components/HeroHeader";
-import Visualizations from "@/components/Visualizations";
-import DeepseekPanel from "@/components/openAIPanel";
-import FileDropzone from "@/components/FileDropZone";
-import CleanDataPanel from "@/components/CleanDataPanel";
 import WeconTable from "@/components/WeconTable";
 
-const FIXED_SCHEMA: Record<string, string> = {
-  time: "datetime",
-  Ph_Sensor: "number",
-  ORP_Sensor: "number",
-  CT_Sensor: "number",
-  TDS_Sensor: "number",
-  NH_Sensor: "number",
-  DO_Sensor: "number",
-  TR_Sensor: "number",
-  BOD_Sensor: "number",
-  COD_Sensor: "number",
-  Predicted_Class: "string"
-};
+const MapSelector = dynamic(
+  () => import("@/components/MapSelector"),
+  { ssr: false }
+);
 
 export default function Page() {
-  
+  const [selectedArea, setSelectedArea] = useState<string | null>(null);
+
   return (
-    <main className="min-h-screen bg-white">
+    <main className="min-h-screen bg-gray-50">
+      {/* Header tetap ada */}
       <HeroHeader />
-      <WeconTable />
+
+      {/* Map Selection */}
+      {!selectedArea && (
+        <section className="py-10">
+          <div className="max-w-6xl mx-auto px-4">
+            <MapSelector onSelect={setSelectedArea} />
+          </div>
+        </section>
+      )}
+
+      {/* Dashboard Section */}
+      {selectedArea && (
+        <section className="py-8">
+          <div className="max-w-6xl mx-auto px-4 space-y-6">
+            
+            {/* Back + Area Info */}
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setSelectedArea(null)}
+                className="text-blue-600 hover:text-blue-800 font-medium text-sm"
+              >
+                ← Back to Map
+              </button>
+
+              <div className="text-sm text-gray-600">
+                Monitoring Area:{" "}
+                <span className="font-semibold capitalize text-gray-800">
+                  {selectedArea}
+                </span>
+              </div>
+            </div>
+
+            {/* Main Monitoring Table */}
+            <WeconTable initialArea={selectedArea} />
+          </div>
+        </section>
+      )}
     </main>
   );
 }
