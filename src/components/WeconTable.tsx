@@ -5,7 +5,11 @@ import Visualizations from "@/components/Visualizations";
 import OpenAIPanel from "@/components/openAIPanel";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { fetchLatestData, fetchDataByDateRange, validateLocation } from "@/lib/apiClient";
+import {
+  fetchLatestData,
+  fetchDataByDateRange,
+  validateLocation,
+} from "@/lib/apiClient";
 
 type Props = {
   initialArea: string;
@@ -40,10 +44,16 @@ export default function WeconTable({ initialArea }: Props) {
 
   // Fungsi untuk check apakah record punya minimal satu sensor value yang meaningful
   function hasValidSensorData(record: any): boolean {
-    return sensorKeys.some(key => {
+    return sensorKeys.some((key) => {
       const val = record[key];
       // Check apakah value adalah meaningful (bukan null, undefined, empty string, 0, atau NaN)
-      return val !== null && val !== undefined && val !== "" && val !== 0 && !isNaN(val);
+      return (
+        val !== null &&
+        val !== undefined &&
+        val !== "" &&
+        val !== 0 &&
+        !isNaN(val)
+      );
     });
   }
 
@@ -68,17 +78,14 @@ export default function WeconTable({ initialArea }: Props) {
     }
 
     // Handle old format: "01/03/2026, 01:47:18" or "01/03/2026 01:47:18"
-    const [datePart, timePart] =
-      ts.includes(",")
-        ? ts.split(",").map((s) => s.trim())
-        : ts.split(" ");
+    const [datePart, timePart] = ts.includes(",")
+      ? ts.split(",").map((s) => s.trim())
+      : ts.split(" ");
 
     if (!datePart) return 0;
 
     const [day, month, year] = datePart.split("/");
-    const timeArray = timePart
-      ? timePart.split(":").map(Number)
-      : [0, 0, 0];
+    const timeArray = timePart ? timePart.split(":").map(Number) : [0, 0, 0];
 
     return new Date(
       Number(year),
@@ -86,7 +93,7 @@ export default function WeconTable({ initialArea }: Props) {
       Number(day),
       timeArray[0] || 0,
       timeArray[1] || 0,
-      timeArray[2] || 0
+      timeArray[2] || 0,
     ).getTime();
   }
 
@@ -101,7 +108,9 @@ export default function WeconTable({ initialArea }: Props) {
     setLoading(true);
     setErrorMsg(null);
     try {
-      console.log(`Fetching data for area: ${area}, range: ${fetchStart} to ${fetchEnd}`);
+      console.log(
+        `Fetching data for area: ${area}, range: ${fetchStart} to ${fetchEnd}`,
+      );
       const json = await fetchDataByDateRange(area, fetchStart, fetchEnd);
       const arr = Array.isArray(json) ? json : [];
       if (arr.length === 0) {
@@ -126,8 +135,8 @@ export default function WeconTable({ initialArea }: Props) {
     try {
       console.log(`Fetching latest data for area: ${area}`);
       const latestRecord = await fetchLatestData(area);
-      
-      if (latestRecord && typeof latestRecord === 'object') {
+
+      if (latestRecord && typeof latestRecord === "object") {
         setLatestData([latestRecord]);
       } else {
         setLatestData([]);
@@ -143,28 +152,43 @@ export default function WeconTable({ initialArea }: Props) {
 
   /* ================= FIRST LOAD ================= */
 
+  function getMalaysiaToday(): string {
+    const now = new Date();
+
+    const malaysiaTime = new Date(
+      now.toLocaleString("en-US", {
+        timeZone: "Asia/Kuala_Lumpur",
+      }),
+    );
+
+    const year = malaysiaTime.getFullYear();
+    const month = String(malaysiaTime.getMonth() + 1).padStart(2, "0");
+    const day = String(malaysiaTime.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  }
+
   useEffect(() => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getMalaysiaToday();
+
     setStart(today);
     setEnd(today);
+    setCurrentPage(1);
+    setErrorMsg(null);
 
     async function loadInitial() {
       setLoading(true);
-      setErrorMsg(null);
+
       try {
-        // validasi lokasi sebelum request
         await validateLocation(area);
 
-        await Promise.all([
-          fetchHistorical(today, today),
-          fetchLatest()
-        ]);
+        await Promise.all([fetchHistorical(today, today), fetchLatest()]);
       } catch (error: any) {
-        // hanya tampilkan log jika bukan masalah lokasi
-        if (error.message && error.message.includes("Unsupported location")) {
+        if (error?.message && error.message.includes("Unsupported location")) {
           setErrorMsg(`Area '${area}' belum didukung`);
         } else {
-          console.error("Error during initial load:", error);
+          console.error("Initial load error:", error);
+          setErrorMsg("Gagal memuat data");
         }
       } finally {
         setLoading(false);
@@ -179,7 +203,7 @@ export default function WeconTable({ initialArea }: Props) {
   const sortedData = useMemo(() => {
     // Filter data yang kosong, hanya yang ada sensor values
     const filtered = [...data].filter(hasValidSensorData);
-    
+
     return filtered.sort((a, b) => {
       const timeA = parseTimestamp(a.Timestamp);
       const timeB = parseTimestamp(b.Timestamp);
@@ -197,7 +221,7 @@ export default function WeconTable({ initialArea }: Props) {
 
   const paginatedData = sortedData.slice(
     (currentPage - 1) * rowsPerPage,
-    currentPage * rowsPerPage
+    currentPage * rowsPerPage,
   );
 
   const schema = useMemo(() => {
@@ -205,9 +229,7 @@ export default function WeconTable({ initialArea }: Props) {
     const first = sortedData[0];
     const obj: Record<string, string> = {};
     Object.keys(first).forEach((key) => {
-      obj[key] = key.toLowerCase().includes("time")
-        ? "datetime"
-        : "number";
+      obj[key] = key.toLowerCase().includes("time") ? "datetime" : "number";
     });
     return obj;
   }, [sortedData]);
@@ -215,93 +237,82 @@ export default function WeconTable({ initialArea }: Props) {
   /* ================= EXPORT PDF ================= */
 
   const handleExportPDF = () => {
-  const pdf = new jsPDF("p", "mm", "a4");
+    const pdf = new jsPDF("p", "mm", "a4");
 
-  /* ===== HEADER ===== */
-  pdf.setFontSize(16);
-  pdf.text("iSENS-AIR River Monitoring Report", 105, 15, {
-    align: "center",
-  });
-
-  pdf.setFontSize(10);
-  pdf.text(
-    `Area: ${area} | Generated: ${new Date().toLocaleString()}`,
-    105,
-    22,
-    { align: "center" }
-  );
-
-  let currentY = 30;
-
-  /* ===== SNAPSHOT ===== */
-  if (latestRow) {
-    pdf.setFontSize(12);
-    pdf.text("Latest Snapshot", 14, currentY);
-    currentY += 6;
-
-    autoTable(pdf, {
-      startY: currentY,
-      head: [["Parameter", "Value"]],
-      body: sensorKeys.map((k) => [
-        k,
-        roundValue(latestRow[k]),
-      ]),
-      styles: { fontSize: 9 },
-      theme: "grid",
+    /* ===== HEADER ===== */
+    pdf.setFontSize(16);
+    pdf.text("iSENS-AIR River Monitoring Report", 105, 15, {
+      align: "center",
     });
 
-    currentY = (pdf as any).lastAutoTable.finalY + 10;
-  }
-
-  /* ===== TREND GRAPH ===== */
-  const canvas = document.querySelector("canvas");
-
-  if (canvas) {
-    pdf.addPage();
-
-    pdf.setFontSize(12);
-    pdf.text("Trend Visualization", 14, 15);
-
-    const chartImage = canvas.toDataURL("image/png");
-
-    pdf.addImage(
-      chartImage,
-      "PNG",
-      10,
-      20,
-      190,
-      100
+    pdf.setFontSize(10);
+    pdf.text(
+      `Area: ${area} | Generated: ${new Date().toLocaleString()}`,
+      105,
+      22,
+      { align: "center" },
     );
-  }
 
-  /* ===== HISTORICAL TABLE ===== */
-  if (sortedData.length > 0) {
-    pdf.addPage();
+    let currentY = 30;
 
-    pdf.setFontSize(12);
-    pdf.text("Historical Data", 14, 15);
+    /* ===== SNAPSHOT ===== */
+    if (latestRow) {
+      pdf.setFontSize(12);
+      pdf.text("Latest Snapshot", 14, currentY);
+      currentY += 6;
 
-    const tableBody = sortedData.map((row) => [
-      row.Timestamp,
-      ...sensorKeys.map((k) => roundValue(row[k])),
-    ]);
+      autoTable(pdf, {
+        startY: currentY,
+        head: [["Parameter", "Value"]],
+        body: sensorKeys.map((k) => [k, roundValue(latestRow[k])]),
+        styles: { fontSize: 9 },
+        theme: "grid",
+      });
 
-    autoTable(pdf, {
-      startY: 20,
-      head: [["Timestamp", ...sensorKeys]],
-      body: tableBody,
-      styles: { fontSize: 6 },
-      theme: "grid",
-      margin: { top: 20 },
-    });
-  }
+      currentY = (pdf as any).lastAutoTable.finalY + 10;
+    }
 
-  pdf.save(`iSENS-AIR-${area}-report.pdf`);
-};
+    /* ===== TREND GRAPH ===== */
+    const canvas = document.querySelector("canvas");
+
+    if (canvas) {
+      pdf.addPage();
+
+      pdf.setFontSize(12);
+      pdf.text("Trend Visualization", 14, 15);
+
+      const chartImage = canvas.toDataURL("image/png");
+
+      pdf.addImage(chartImage, "PNG", 10, 20, 190, 100);
+    }
+
+    /* ===== HISTORICAL TABLE ===== */
+    if (sortedData.length > 0) {
+      pdf.addPage();
+
+      pdf.setFontSize(12);
+      pdf.text("Historical Data", 14, 15);
+
+      const tableBody = sortedData.map((row) => [
+        row.Timestamp,
+        ...sensorKeys.map((k) => roundValue(row[k])),
+      ]);
+
+      autoTable(pdf, {
+        startY: 20,
+        head: [["Timestamp", ...sensorKeys]],
+        body: tableBody,
+        styles: { fontSize: 6 },
+        theme: "grid",
+        margin: { top: 20 },
+      });
+    }
+
+    pdf.save(`iSENS-AIR-${area}-report.pdf`);
+  };
 
   /* ================= PAGINATION ================= */
 
-  
   /* ================= SMART PAGINATION ================= */
 
   function renderPagination() {
@@ -322,7 +333,6 @@ export default function WeconTable({ initialArea }: Props) {
 
     return (
       <div className="flex items-center justify-center gap-2 mt-6 flex-wrap">
-
         {/* PREV */}
         <button
           disabled={currentPage === 1}
@@ -351,9 +361,7 @@ export default function WeconTable({ initialArea }: Props) {
             key={page}
             onClick={() => setCurrentPage(page)}
             className={`px-3 py-1 rounded ${
-              currentPage === page
-                ? "bg-blue-600 text-white"
-                : "border"
+              currentPage === page ? "bg-blue-600 text-white" : "border"
             }`}
           >
             {page}
@@ -363,9 +371,7 @@ export default function WeconTable({ initialArea }: Props) {
         {/* LAST + DOTS */}
         {endPage < totalPages && (
           <>
-            {endPage < totalPages - 1 && (
-              <span className="px-2">...</span>
-            )}
+            {endPage < totalPages - 1 && <span className="px-2">...</span>}
             <button
               onClick={() => setCurrentPage(totalPages)}
               className="px-3 py-1 border rounded"
@@ -387,12 +393,10 @@ export default function WeconTable({ initialArea }: Props) {
     );
   }
 
-
   /* ================= UI ================= */
 
   return (
     <div className="mt-6 space-y-10">
-
       {errorMsg && (
         <div className="max-w-6xl mx-auto px-4">
           <div className="bg-red-100 text-red-800 p-3 rounded mb-4">
@@ -404,7 +408,6 @@ export default function WeconTable({ initialArea }: Props) {
       {/* ===== FILTER ===== */}
       <div className="max-w-6xl mx-auto px-4">
         <div className="flex gap-6 items-end border-b pb-5">
-
           <div className="flex flex-col">
             <label className="text-xs text-gray-500">Start</label>
             <input
@@ -449,9 +452,7 @@ export default function WeconTable({ initialArea }: Props) {
         <div className="max-w-6xl mx-auto px-4">
           <div className="border rounded-2xl p-6 bg-white">
             <div className="flex justify-between mb-4">
-              <h2 className="font-semibold text-gray-800">
-                Latest Snapshot
-              </h2>
+              <h2 className="font-semibold text-gray-800">Latest Snapshot</h2>
               <span className="text-sm text-gray-500">
                 {latestRow.Timestamp}
               </span>
@@ -475,9 +476,7 @@ export default function WeconTable({ initialArea }: Props) {
       {!loading && sortedData.length > 0 && (
         <div className="max-w-6xl mx-auto px-4">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="font-semibold text-gray-800">
-              Trend Analysis
-            </h2>
+            <h2 className="font-semibold text-gray-800">Trend Analysis</h2>
 
             <div className="flex gap-3">
               <button
@@ -583,12 +582,8 @@ function DataCard({
 
   return (
     <div className="border rounded-xl p-4 bg-gray-50">
-      <p className="text-xs text-gray-500">
-        {labels[sensorKey]}
-      </p>
-      <p className="text-xl font-semibold">
-        {roundValue(value)}
-      </p>
+      <p className="text-xs text-gray-500">{labels[sensorKey]}</p>
+      <p className="text-xl font-semibold">{roundValue(value)}</p>
     </div>
   );
 }
