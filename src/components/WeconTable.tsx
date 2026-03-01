@@ -60,11 +60,26 @@ export default function WeconTable({ initialArea }: Props) {
   // Fungsi untuk round angka ke 2 desimal
   function roundValue(value: any): string {
     if (value === null || value === undefined || value === "") return "-";
-    if (typeof value === "number") {
-      return value.toFixed(2);
-    }
     const num = parseFloat(value);
-    return isNaN(num) ? String(value) : num.toFixed(2);
+    return isNaN(num) ? "-" : num.toFixed(2);
+  }
+
+  /* ================= FORMAT DISPLAY DATE ================= */
+
+  function formatDisplayDateTime(ts: string) {
+    if (!ts) return "-";
+
+    const date = new Date(ts);
+
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
+
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    const second = String(date.getSeconds()).padStart(2, "0");
+
+    return `${day}/${month}/${year}, ${hour}:${minute}:${second}`;
   }
 
   /* ================= TIMESTAMP ================= */
@@ -150,40 +165,9 @@ export default function WeconTable({ initialArea }: Props) {
   }
 
   /* ================= FIRST LOAD ================= */
-  function formatMalaysiaDateTime(ts: string) {
-  if (!ts) return "-";
-
-  const date = new Date(ts);
-
-  return date.toLocaleString("en-GB", {
-    timeZone: "Asia/Kuala_Lumpur",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false, // 🔥 INI PENTING
-  });
-}
-  function getMalaysiaToday(): string {
-    const now = new Date();
-
-    const malaysiaTime = new Date(
-      now.toLocaleString("en-US", {
-        timeZone: "Asia/Kuala_Lumpur",
-      }),
-    );
-
-    const year = malaysiaTime.getFullYear();
-    const month = String(malaysiaTime.getMonth() + 1).padStart(2, "0");
-    const day = String(malaysiaTime.getDate()).padStart(2, "0");
-
-    return `${year}-${month}-${day}`;
-  }
 
   useEffect(() => {
-    const today = getMalaysiaToday();
+    const today = new Date().toISOString().split("T")[0];
 
     setStart(today);
     setEnd(today);
@@ -194,8 +178,10 @@ export default function WeconTable({ initialArea }: Props) {
       setLoading(true);
 
       try {
+        // validasi lokasi dulu
         await validateLocation(area);
 
+        // ambil historical & latest
         await Promise.all([
           fetchHistorical(today, today),
           fetchLatestSnapshot(),
@@ -214,30 +200,30 @@ export default function WeconTable({ initialArea }: Props) {
 
     loadInitial();
   }, [area]);
+
   /* ================= AUTO REFRESH LATEST ================= */
 
-useEffect(() => {
-  const interval = setInterval(async () => {
-    if (document.hidden) return; // tidak polling kalau tab tidak aktif
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (document.hidden) return; // tidak polling kalau tab tidak aktif
 
-    try {
-      const latestRecord = await fetchLatestData(area);
+      try {
+        const latestRecord = await fetchLatestData(area);
 
-      if (
-        latestRecord &&
-        latestData.length &&
-        latestRecord.Timestamp !== latestData[0]?.Timestamp
-      ) {
-        setLatestData([latestRecord]);
+        if (
+          latestRecord &&
+          latestData.length &&
+          latestRecord.Timestamp !== latestData[0]?.Timestamp
+        ) {
+          setLatestData([latestRecord]);
+        }
+      } catch (error) {
+        console.error("Auto refresh latest error:", error);
       }
-    } catch (error) {
-      console.error("Auto refresh latest error:", error);
-    }
-  }, 60000); // setiap 60 detik
+    }, 60000); // setiap 60 detik
 
-  return () => clearInterval(interval);
-}, [area, latestData]);
-
+    return () => clearInterval(interval);
+  }, [area, latestData]);
 
   /* ================= SORT & FILTER ================= */
 
@@ -252,11 +238,11 @@ useEffect(() => {
     });
   }, [data, sortAsc]);
 
- /* ================= LATEST ROW ================= */
+  /* ================= LATEST ROW ================= */
 
-const latestRow = useMemo(() => {
-  return latestData.length ? latestData[0] : null;
-}, [latestData]);
+  const latestRow = useMemo(() => {
+    return latestData.length ? latestData[0] : null;
+  }, [latestData]);
 
   const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
@@ -489,37 +475,32 @@ const latestRow = useMemo(() => {
       </div>
 
       {/* ===== LATEST SNAPSHOT ===== */}
-      {/* ===== LATEST SNAPSHOT ===== */}
-{!loading && latestRow && (
-  <div className="max-w-6xl mx-auto px-4">
-    <div className="border rounded-2xl p-6 bg-white">
+      {!loading && latestRow && (
+        <div className="max-w-6xl mx-auto px-4">
+          <div className="border rounded-2xl p-6 bg-white">
+            {/* Header */}
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="font-semibold text-gray-800">Latest Snapshot</h2>
 
-      {/* Header */}
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="font-semibold text-gray-800">
-          Latest Snapshot
-        </h2>
+              <span className="text-sm text-gray-500 whitespace-nowrap">
+                {formatDisplayDateTime(latestRow.Timestamp)}
+              </span>
+            </div>
 
-        <span className="text-sm text-gray-500 whitespace-nowrap">
-          {formatMalaysiaDateTime(latestRow.Timestamp)}
-        </span>
-      </div>
-
-      {/* Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        {sensorKeys.map((key) => (
-          <DataCard
-            key={key}
-            sensorKey={key}
-            value={latestRow[key]}
-            roundValue={roundValue}
-          />
-        ))}
-      </div>
-
-    </div>
-  </div>
-)}
+            {/* Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              {sensorKeys.map((key) => (
+                <DataCard
+                  key={key}
+                  sensorKey={key}
+                  value={latestRow[key]}
+                  roundValue={roundValue}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ===== TREND ===== */}
       {!loading && sortedData.length > 0 && (
@@ -574,7 +555,7 @@ const latestRow = useMemo(() => {
                 {paginatedData.map((row, i) => (
                   <tr key={i} className="border-t">
                     <td className="px-3 py-2">
-                      {formatMalaysiaDateTime(row.Timestamp)}
+                      {formatDisplayDateTime(row.Timestamp)}
                     </td>
                     {sensorKeys.map((key) => (
                       <td key={key} className="px-3 py-2">
