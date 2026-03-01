@@ -205,25 +205,30 @@ export default function WeconTable({ initialArea }: Props) {
 
   useEffect(() => {
     const interval = setInterval(async () => {
-      if (document.hidden) return; // tidak polling kalau tab tidak aktif
+      if (document.hidden) return;
 
       try {
         const latestRecord = await fetchLatestData(area);
 
-        if (
-          latestRecord &&
-          latestData.length &&
-          latestRecord.Timestamp !== latestData[0]?.Timestamp
-        ) {
-          setLatestData([latestRecord]);
-        }
+        // pastikan datanya valid dulu
+        if (!latestRecord || !latestRecord.Timestamp) return;
+
+        setLatestData((prev) => {
+          if (!prev.length) return [latestRecord];
+
+          if (latestRecord.Timestamp !== prev[0]?.Timestamp) {
+            return [latestRecord];
+          }
+
+          return prev;
+        });
       } catch (error) {
         console.error("Auto refresh latest error:", error);
       }
-    }, 60000); // setiap 60 detik
+    }, 60000);
 
     return () => clearInterval(interval);
-  }, [area, latestData]);
+  }, [area]);
 
   /* ================= SORT & FILTER ================= */
 
