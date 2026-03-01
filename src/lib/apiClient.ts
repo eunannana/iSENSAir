@@ -3,6 +3,19 @@
 
 const API_BASE = "https://isensair-backend.onrender.com";
 
+// Callback untuk melacak status retry
+export type RetryCallback = (attempt: number, totalRetries: number, isBootingError: boolean) => void;
+
+let retryCallback: RetryCallback | null = null;
+
+/**
+ * Set callback untuk menangkap update retry status
+ * Gunakan ini untuk update UI loading state
+ */
+export function setRetryCallback(callback: RetryCallback | null) {
+  retryCallback = callback;
+}
+
 // perform fetch with simple retry/backoff to handle sleeping API
 async function fetchWithRetry(input: RequestInfo, init?: RequestInit, retries = 5, backoff = 1000): Promise<Response> {
   let attempt = 0;
@@ -11,11 +24,18 @@ async function fetchWithRetry(input: RequestInfo, init?: RequestInit, retries = 
       const res = await fetch(input, init);
       if (!res.ok && [502, 503, 504].includes(res.status) && attempt < retries) {
         // server not ready yet, fallthrough to retry
+        const isBootingError = [502, 503, 504].includes(res.status);
+        if (retryCallback) {
+          retryCallback(attempt + 1, retries, isBootingError);
+        }
       } else {
         return res;
       }
     } catch (err) {
       if (attempt >= retries) throw err;
+      if (retryCallback) {
+        retryCallback(attempt + 1, retries, true);
+      }
     }
     attempt++;
     await new Promise((r) => setTimeout(r, backoff * attempt));

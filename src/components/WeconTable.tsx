@@ -3,12 +3,14 @@
 import { useState, useEffect, useMemo } from "react";
 import Visualizations from "@/components/Visualizations";
 import OpenAIPanel from "@/components/openAIPanel";
+import LoadingScreen from "@/components/LoadingScreen";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
   fetchLatestData,
   fetchDataByDateRange,
   validateLocation,
+  setRetryCallback,
 } from "@/lib/apiClient";
 
 type Props = {
@@ -23,6 +25,8 @@ export default function WeconTable({ initialArea }: Props) {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [loadingInitial, setLoadingInitial] = useState(true);
+  const [loadingStage, setLoadingStage] = useState<"connecting" | "booting" | "loading">("connecting");
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const [loadingHistorical, setLoadingHistorical] = useState(false);
   const [sortAsc, setSortAsc] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -173,13 +177,27 @@ export default function WeconTable({ initialArea }: Props) {
     setEnd(today);
     setCurrentPage(1);
     setErrorMsg(null);
+    setLoadingStage("connecting");
+    setRetryAttempt(0);
+
+    // Set up retry callback untuk menangkap status API booting
+    const handleRetry = (attempt: number, totalRetries: number, isBootingError: boolean) => {
+      setRetryAttempt(attempt);
+      if (isBootingError) {
+        setLoadingStage("booting");
+      }
+    };
+
+    setRetryCallback(handleRetry);
 
     async function loadInitial() {
       setLoadingInitial(true);
 
       try {
+        setLoadingStage("connecting");
         await validateLocation(area);
 
+        setLoadingStage("loading");
         await Promise.all([
           fetchHistorical(today, today),
           fetchLatestSnapshot(),
@@ -187,7 +205,8 @@ export default function WeconTable({ initialArea }: Props) {
       } catch (error: any) {
         setErrorMsg("Failed to load initial data");
       } finally {
-        setLoadingInitial(false); // 🔥 INI YANG KURANG
+        setLoadingInitial(false);
+        setRetryCallback(null); // Clean up callback
       }
     }
 
@@ -402,23 +421,21 @@ export default function WeconTable({ initialArea }: Props) {
   }
 
   /* ================= UI ================= */
-  if (loadingInitial) {
-    return (
-      <div className="fixed inset-0 bg-white flex flex-col items-center justify-center z-50 transition-opacity duration-500">
-        <div className="flex flex-col items-center gap-4">
-          {/* Spinner */}
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-
-          {/* Text */}
-          <p className="text-gray-600 text-sm tracking-wide">
-            Loading river monitoring data...
-          </p>
-        </div>
-      </div>
-    );
-  }
   return (
-    <div className="mt-6 space-y-10">
+    <>
+      {/* Loading Screen Modal */}
+      <LoadingScreen 
+        isVisible={loadingInitial} 
+        stage={loadingStage}
+        message={
+          loadingStage === "booting"
+            ? `Waking up API (Attempt ${retryAttempt})`
+            : undefined
+        }
+      />
+
+      {loadingInitial ? null : (
+        <div className="mt-6 space-y-10">
       {errorMsg && (
         <div className="max-w-6xl mx-auto px-4">
           <div className="bg-red-100 text-red-800 p-3 rounded mb-4">
@@ -428,7 +445,7 @@ export default function WeconTable({ initialArea }: Props) {
       )}
 
       {/* ===== LATEST SNAPSHOT ===== */}
-      {!loadingInitial && latestRow && (
+      {latestRow && (
         <div className="max-w-6xl mx-auto px-4">
           <div className="border rounded-2xl p-6 bg-white">
             {/* Header */}
@@ -456,8 +473,7 @@ export default function WeconTable({ initialArea }: Props) {
       )}
 
       {/* ===== TREND ===== */}
-      {!loadingInitial && (
-        <div className="max-w-6xl mx-auto px-4">
+      <div className="max-w-6xl mx-auto px-4">
           {/* ===== TREND HEADER ===== */}
           <div className="mb-6">
             {/* Title */}
@@ -536,11 +552,10 @@ export default function WeconTable({ initialArea }: Props) {
           <div className="border rounded-2xl p-6 bg-white">
             <Visualizations rows={sortedData} schema={schema} />
           </div>
-        </div>
-      )}
+      </div>
 
       {/* ===== HISTORICAL TABLE ===== */}
-      {!loadingInitial && paginatedData.length > 0 && (
+      {paginatedData.length > 0 && (
         <div className="max-w-6xl mx-auto px-4">
           {/* ===== TITLE SECTION ===== */}
           <div className="mb-6 text-center">
@@ -610,7 +625,9 @@ export default function WeconTable({ initialArea }: Props) {
           </div>
         </div>
       )}
-    </div>
+        </div>
+      )}
+    </>
   );
 }
 
