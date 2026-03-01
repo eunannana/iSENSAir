@@ -197,27 +197,10 @@ export default function WeconTable({ initialArea }: Props) {
   /* ================= AUTO REFRESH LATEST ================= */
 
   useEffect(() => {
-    const interval = setInterval(async () => {
+    // run a refresh every minute; if the tab is hidden we skip the call
+    const interval = setInterval(() => {
       if (document.hidden) return;
-
-      try {
-        const latestRecord = await fetchLatestData(area);
-
-        // pastikan datanya valid dulu
-        if (!latestRecord || !latestRecord.Timestamp) return;
-
-        setLatestData((prev) => {
-          if (!prev.length) return [latestRecord];
-
-          if (latestRecord.Timestamp !== prev[0]?.Timestamp) {
-            return [latestRecord];
-          }
-
-          return prev;
-        });
-      } catch (error) {
-        console.error("Auto refresh latest error:", error);
-      }
+      fetchLatestSnapshot();
     }, 60000);
 
     return () => clearInterval(interval);
