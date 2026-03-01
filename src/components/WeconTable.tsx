@@ -439,35 +439,6 @@ export default function WeconTable({ initialArea }: Props) {
 
       {/* ===== FILTER ===== */}
       <div className="max-w-6xl mx-auto px-4">
-        <div className="flex gap-6 items-end border-b pb-5">
-          <div className="flex flex-col">
-            <label className="text-xs text-gray-500">Start</label>
-            <input
-              type="date"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-              className="border rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
-
-          <div className="flex flex-col">
-            <label className="text-xs text-gray-500">End</label>
-            <input
-              type="date"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              className="border rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
-
-          <button
-            onClick={() => fetchHistorical(start, end)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm"
-          >
-            Load Data
-          </button>
-        </div>
-
         {/* ===== LOADING UNDER LINE ===== */}
         {loading && (
           <div className="flex justify-center items-center py-6">
@@ -510,23 +481,64 @@ export default function WeconTable({ initialArea }: Props) {
       {/* ===== TREND ===== */}
       {!loading && sortedData.length > 0 && (
         <div className="max-w-6xl mx-auto px-4">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="font-semibold text-gray-800">Trend Analysis</h2>
+          {/* ===== TREND HEADER ===== */}
+          <div className="mb-6">
+            {/* Title */}
+            <h2 className="font-semibold text-gray-800 text-lg mb-4">
+              Trend Analysis
+            </h2>
 
-            <div className="flex gap-3">
-              <button
-                onClick={handleExportPDF}
-                className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm"
-              >
-                Export PDF
-              </button>
+            {/* Filter + Actions Row */}
+            <div className="flex items-center justify-between">
+              {/* LEFT: Date Filter */}
+              <div className="flex items-end gap-3">
+                {/* Start */}
+                <div className="flex flex-col">
+                  <label className="text-xs text-gray-500 mb-1">Start</label>
+                  <input
+                    type="date"
+                    value={start}
+                    onChange={(e) => setStart(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
 
-              <button
-                onClick={() => setShowAI(true)}
-                className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm"
-              >
-                🤖 AI Insight
-              </button>
+                {/* End */}
+                <div className="flex flex-col">
+                  <label className="text-xs text-gray-500 mb-1">End</label>
+                  <input
+                    type="date"
+                    value={end}
+                    onChange={(e) => setEnd(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+
+                {/* Load */}
+                <button
+                  onClick={() => fetchHistorical(start, end)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm h-[38px]"
+                >
+                  Load Data
+                </button>
+              </div>
+
+              {/* RIGHT: Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleExportPDF}
+                  className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm h-[38px]"
+                >
+                  Export PDF
+                </button>
+
+                <button
+                  onClick={() => setShowAI(true)}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm h-[38px]"
+                >
+                  🤖 AI Insight
+                </button>
+              </div>
             </div>
           </div>
 
