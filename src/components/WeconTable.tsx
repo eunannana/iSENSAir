@@ -64,7 +64,14 @@ export default function WeconTable({ initialArea }: Props) {
     const num = parseFloat(value);
     return isNaN(num) ? "-" : num.toFixed(2);
   }
-
+  function formatDisplayDate(dateStr: string) {
+    if (!dateStr) return "-";
+    const date = new Date(dateStr);
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
   /* ================= FORMAT DISPLAY DATE ================= */
 
   function formatDisplayDateTime(ts: string) {
@@ -412,21 +419,21 @@ export default function WeconTable({ initialArea }: Props) {
   }
 
   /* ================= UI ================= */
-if (loadingInitial) {
-  return (
-    <div className="fixed inset-0 bg-white flex flex-col items-center justify-center z-50 transition-opacity duration-500">
-      <div className="flex flex-col items-center gap-4">
-        {/* Spinner */}
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+  if (loadingInitial) {
+    return (
+      <div className="fixed inset-0 bg-white flex flex-col items-center justify-center z-50 transition-opacity duration-500">
+        <div className="flex flex-col items-center gap-4">
+          {/* Spinner */}
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
 
-        {/* Text */}
-        <p className="text-gray-600 text-sm tracking-wide">
-          Loading river monitoring data...
-        </p>
+          {/* Text */}
+          <p className="text-gray-600 text-sm tracking-wide">
+            Loading river monitoring data...
+          </p>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
   return (
     <div className="mt-6 space-y-10">
       {errorMsg && (
@@ -549,29 +556,46 @@ if (loadingInitial) {
         </div>
       )}
 
-      {/* ===== TABLE ===== */}
+      {/* ===== HISTORICAL TABLE ===== */}
       {!loadingInitial && paginatedData.length > 0 && (
         <div className="max-w-6xl mx-auto px-4">
-          <div className="border rounded-lg overflow-x-auto bg-white">
+          {/* ===== TITLE SECTION ===== */}
+          <div className="mb-6 text-center">
+            <h2 className="font-semibold text-gray-800 text-xl">
+              Historical Data
+            </h2>
+
+            <p className="text-sm text-gray-500 mt-1">
+              {formatDisplayDate(start)} - {formatDisplayDate(end)}
+            </p>
+
+            <p className="text-xs text-gray-400 mt-1">
+              Total Records: {sortedData.length}
+            </p>
+          </div>
+
+          {/* ===== TABLE ===== */}
+          <div className="border rounded-2xl overflow-x-auto bg-white shadow-sm">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-100">
                 <tr>
                   <th
-                    className="px-3 py-2 cursor-pointer"
+                    className="px-3 py-2 cursor-pointer text-left"
                     onClick={() => setSortAsc(!sortAsc)}
                   >
                     Timestamp {sortAsc ? "↑" : "↓"}
                   </th>
                   {sensorKeys.map((key) => (
-                    <th key={key} className="px-3 py-2">
+                    <th key={key} className="px-3 py-2 text-left">
                       {key}
                     </th>
                   ))}
                 </tr>
               </thead>
+
               <tbody>
                 {paginatedData.map((row, i) => (
-                  <tr key={i} className="border-t">
+                  <tr key={i} className="border-t hover:bg-gray-50 transition">
                     <td className="px-3 py-2">
                       {formatDisplayDateTime(row.Timestamp)}
                     </td>
@@ -589,7 +613,6 @@ if (loadingInitial) {
           {renderPagination()}
         </div>
       )}
-
       {/* ===== AI MODAL ===== */}
       {showAI && (
         <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
