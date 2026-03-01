@@ -412,7 +412,21 @@ export default function WeconTable({ initialArea }: Props) {
   }
 
   /* ================= UI ================= */
+if (loadingInitial) {
+  return (
+    <div className="fixed inset-0 bg-white flex flex-col items-center justify-center z-50 transition-opacity duration-500">
+      <div className="flex flex-col items-center gap-4">
+        {/* Spinner */}
+        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
 
+        {/* Text */}
+        <p className="text-gray-600 text-sm tracking-wide">
+          Loading river monitoring data...
+        </p>
+      </div>
+    </div>
+  );
+}
   return (
     <div className="mt-6 space-y-10">
       {errorMsg && (
