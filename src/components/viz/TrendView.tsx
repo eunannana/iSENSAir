@@ -62,7 +62,33 @@ function formatNumber(value: number) {
 
 /* ==============================
    BUILD SERIES PER PARAMETER
+   (plus date formatting helpers)
 ============================== */
+
+// convert a bucket string into a human-friendly label depending on aggregation strategy
+function formatBucket(bucket: string, agg: Agg): string {
+  switch (agg) {
+    case "all":
+      return bucket; // raw time string already
+    case "daily":
+      // bucket is already YYYY-MM-DD
+      return dayjs(bucket).format("YYYY-MM-DD");
+    case "weekly": {
+      const [year, week] = bucket.split("-W");
+      const start = dayjs()
+        .year(Number(year))
+        .isoWeek(Number(week))
+        .startOf("isoWeek");
+      const end = start.endOf("isoWeek");
+      return `${start.format("YYYY-MM-DD")} – ${end.format("YYYY-MM-DD")}`;
+    }
+    case "monthly": {
+      const date = dayjs(bucket + "-01");
+      return date.format("MMMM YYYY");
+    }
+  }
+}
+
 function buildSeries(
   rows: Record<string, unknown>[],
   timeKey: string,
@@ -79,16 +105,15 @@ function buildSeries(
         r[param] !== ""
     )
     .map((r) => ({
-  t: dayjs(r[timeKey] as string, [
-    "DD/MM/YYYY HH:mm:ss",
-    "DD/MM/YYYY, HH:mm:ss",
-    "YYYY-MM-DD HH:mm:ss",
-    "YYYY-MM-DDTHH:mm:ss",
-  ]),
-  v: Number(r[param]),
-  raw: r[timeKey] as string,
-}))
-
+      t: dayjs(r[timeKey] as string, [
+        "DD/MM/YYYY HH:mm:ss",
+        "DD/MM/YYYY, HH:mm:ss",
+        "YYYY-MM-DD HH:mm:ss",
+        "YYYY-MM-DDTHH:mm:ss",
+      ]),
+      v: Number(r[param]),
+      raw: r[timeKey] as string,
+    }))
     .filter((x) => x.t.isValid() && !Number.isNaN(x.v))
     .sort((a, b) => a.t.valueOf() - b.t.valueOf());
 
@@ -100,7 +125,7 @@ function buildSeries(
     }));
   }
 
-  const map = new Map<string, { values: number[]; raw: string }>();
+  const map = new Map<string, { values: number[] }>();
 
   for (const x of cleaned) {
     let key = "";
@@ -111,23 +136,19 @@ function buildSeries(
     if (agg === "monthly")
       key = x.t.format("YYYY-MM");
 
-    if (!map.has(key))
-      map.set(key, { values: [], raw: key });
-
+    if (!map.has(key)) map.set(key, { values: [] });
     map.get(key)!.values.push(x.v);
   }
 
   return [...map.entries()]
     .map(([bucket, obj]) => ({
       dateOnly: bucket,
-      fullTime: bucket,
+      fullTime: formatBucket(bucket, agg),
       value:
         obj.values.reduce((a, b) => a + b, 0) /
         obj.values.length,
     }))
-    .sort((a, b) =>
-      a.dateOnly.localeCompare(b.dateOnly)
-    );
+    .sort((a, b) => a.dateOnly.localeCompare(b.dateOnly));
 }
 
 export default function TrendView({
@@ -236,18 +257,28 @@ export default function TrendView({
 /* ==============================
    COMPONENT CHART PER PARAMETER
 ============================== */
+interface SingleChartProps {
+  rows: Record<string, unknown>[];
+  timeKey: string;
+  param: string;
+  agg: Agg;
+  color: string;
+}
+
 function SingleChart({
   rows,
   timeKey,
   param,
   agg,
   color,
-}: any) {
+}: SingleChartProps) {
   const data = useMemo(
     () =>
       buildSeries(rows, timeKey, param, agg),
     [rows, timeKey, param, agg]
   );
+  // choose x-axis key so every point has a unique x-value
+  const xKey = agg === "all" ? "fullTime" : "dateOnly";
 
   if (!data.length) return null;
 
@@ -271,8 +302,12 @@ function SingleChart({
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis
-              dataKey="dateOnly"
+              dataKey={xKey}
               tick={{ fontSize: 12 }}
+              tickFormatter={(val) => {
+                const s = val as string;
+                return agg === "all" ? dayjs(s).format("YYYY-MM-DD") : formatBucket(s, agg);
+              }}
             />
             <YAxis
               domain={[
@@ -283,10 +318,10 @@ function SingleChart({
               tick={{ fontSize: 12 }}
             />
             <Tooltip
-              labelFormatter={(label, payload) =>
-                payload?.[0]?.payload
-                  ?.fullTime || label
-              }
+              labelFormatter={(label) => {
+                const s = label as string;
+                return agg === "all" ? s : formatBucket(s, agg);
+              }}
               formatter={(value: any) =>
                 formatNumber(Number(value))
               }
