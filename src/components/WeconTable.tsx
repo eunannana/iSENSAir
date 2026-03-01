@@ -22,7 +22,8 @@ export default function WeconTable({ initialArea }: Props) {
   const [latestData, setLatestData] = useState<any[]>([]);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [loadingHistorical, setLoadingHistorical] = useState(false);
   const [sortAsc, setSortAsc] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -115,34 +116,26 @@ export default function WeconTable({ initialArea }: Props) {
   /* ================= FETCH ================= */
 
   async function fetchHistorical(fetchStart: string, fetchEnd: string) {
-    if (!fetchStart || !fetchEnd) {
-      console.warn("Missing start or end date", { fetchStart, fetchEnd });
-      return;
-    }
+    if (!fetchStart || !fetchEnd) return;
 
-    setLoading(true);
+    setLoadingHistorical(true);
     setErrorMsg(null);
+
     try {
-      console.log(
-        `Fetching data for area: ${area}, range: ${fetchStart} to ${fetchEnd}`,
-      );
       const json = await fetchDataByDateRange(area, fetchStart, fetchEnd);
       const arr = Array.isArray(json) ? json : [];
+
       if (arr.length === 0) {
-        setErrorMsg("Tidak ada data dalam rentang tanggal");
+        setErrorMsg("Data not found for the selected date range");
       }
+
       setData(arr);
       setCurrentPage(1);
     } catch (error: any) {
-      if (error.message && error.message.includes("Unsupported location")) {
-        setErrorMsg(`Area '${area}' belum didukung`);
-      } else {
-        console.error("Error in fetchHistorical:", error);
-        setErrorMsg("Gagal memuat data");
-      }
+      setErrorMsg("Failed to load historical data");
       setData([]);
     } finally {
-      setLoading(false);
+      setLoadingHistorical(false);
     }
   }
 
@@ -175,26 +168,19 @@ export default function WeconTable({ initialArea }: Props) {
     setErrorMsg(null);
 
     async function loadInitial() {
-      setLoading(true);
+      setLoadingInitial(true);
 
       try {
-        // validasi lokasi dulu
         await validateLocation(area);
 
-        // ambil historical & latest
         await Promise.all([
           fetchHistorical(today, today),
           fetchLatestSnapshot(),
         ]);
       } catch (error: any) {
-        if (error?.message && error.message.includes("Unsupported location")) {
-          setErrorMsg(`Area '${area}' belum didukung`);
-        } else {
-          console.error("Initial load error:", error);
-          setErrorMsg("Gagal memuat data");
-        }
+        setErrorMsg("Failed to load initial data");
       } finally {
-        setLoading(false);
+        setLoadingInitial(false); // 🔥 INI YANG KURANG
       }
     }
 
@@ -437,21 +423,8 @@ export default function WeconTable({ initialArea }: Props) {
         </div>
       )}
 
-      {/* ===== FILTER ===== */}
-      <div className="max-w-6xl mx-auto px-4">
-        {/* ===== LOADING UNDER LINE ===== */}
-        {loading && (
-          <div className="flex justify-center items-center py-6">
-            <div className="flex items-center gap-3 text-gray-600 text-sm">
-              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-              <span>Loading monitoring data...</span>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* ===== LATEST SNAPSHOT ===== */}
-      {!loading && latestRow && (
+      {!loadingInitial && latestRow && (
         <div className="max-w-6xl mx-auto px-4">
           <div className="border rounded-2xl p-6 bg-white">
             {/* Header */}
@@ -479,7 +452,7 @@ export default function WeconTable({ initialArea }: Props) {
       )}
 
       {/* ===== TREND ===== */}
-      {!loading && sortedData.length > 0 && (
+      {!loadingInitial && (
         <div className="max-w-6xl mx-auto px-4">
           {/* ===== TREND HEADER ===== */}
           <div className="mb-6">
@@ -517,9 +490,14 @@ export default function WeconTable({ initialArea }: Props) {
                 {/* Load */}
                 <button
                   onClick={() => fetchHistorical(start, end)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm h-[38px]"
+                  disabled={loadingHistorical}
+                  className={`px-4 py-2 rounded-lg text-sm h-[38px] ${
+                    loadingHistorical
+                      ? "bg-blue-400 cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700"
+                  } text-white`}
                 >
-                  Load Data
+                  {loadingHistorical ? "Loading..." : "Load Data"}
                 </button>
               </div>
 
@@ -540,6 +518,15 @@ export default function WeconTable({ initialArea }: Props) {
                 </button>
               </div>
             </div>
+            {/* LOADING HISTORICAL */}
+            {loadingHistorical && (
+              <div className="flex justify-center items-center py-10">
+                <div className="flex items-center gap-3 text-gray-600 text-sm">
+                  <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Loading historical data...</span>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="border rounded-2xl p-6 bg-white">
@@ -549,7 +536,7 @@ export default function WeconTable({ initialArea }: Props) {
       )}
 
       {/* ===== TABLE ===== */}
-      {!loading && paginatedData.length > 0 && (
+      {!loadingInitial && paginatedData.length > 0 && (
         <div className="max-w-6xl mx-auto px-4">
           <div className="border rounded-lg overflow-x-auto bg-white">
             <table className="min-w-full text-sm">
