@@ -70,6 +70,11 @@ export default function WeconTable({ initialArea }: Props) {
   const [currentPage, setCurrentPage] = useState(1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [refreshingLatest, setRefreshingLatest] = useState(false);
+  const [snapshotRotationIndex, setSnapshotRotationIndex] = useState(0);
+  const [currentDisplayTime, setCurrentDisplayTime] = useState(() =>
+    new Date().toISOString()
+  );
+  const [snapshotAnimating, setSnapshotAnimating] = useState(false);
 
   const [aiDecision, setAIDecision] = useState<AIDecisionResponse | null>(null);
   const [loadingAIDecision, setLoadingAIDecision] = useState(false);
@@ -456,6 +461,14 @@ export default function WeconTable({ initialArea }: Props) {
   }, [area]);
 
   useEffect(() => {
+    const clockInterval = setInterval(() => {
+      setCurrentDisplayTime(new Date().toISOString());
+    }, 1000);
+
+    return () => clearInterval(clockInterval);
+  }, []);
+
+  useEffect(() => {
     function handleKeydown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setShowInsightModal(false);
@@ -488,6 +501,52 @@ export default function WeconTable({ initialArea }: Props) {
   const latestRow = useMemo(() => {
     return latestData.length ? latestData[0] : null;
   }, [latestData]);
+
+  const latestSnapshotRows = useMemo(() => {
+    const merged = [...latestData, ...sortedData];
+    const uniqueByTimestamp = new Map<string, any>();
+
+    merged.forEach((row) => {
+      if (!row || !row.Timestamp) return;
+      if (!hasValidSensorData(row)) return;
+
+      if (!uniqueByTimestamp.has(row.Timestamp)) {
+        uniqueByTimestamp.set(row.Timestamp, row);
+      }
+    });
+
+    return Array.from(uniqueByTimestamp.values())
+      .sort((a, b) => parseTimestamp(b.Timestamp) - parseTimestamp(a.Timestamp))
+      .slice(0, 3);
+  }, [latestData, sortedData]);
+
+  const displayedSnapshotRow = useMemo(() => {
+    if (latestSnapshotRows.length === 0) return latestRow;
+    const index = snapshotRotationIndex % latestSnapshotRows.length;
+    return latestSnapshotRows[index];
+  }, [latestSnapshotRows, snapshotRotationIndex, latestRow]);
+
+  useEffect(() => {
+    if (latestSnapshotRows.length <= 1) {
+      setSnapshotRotationIndex(0);
+      return;
+    }
+
+    const rotateInterval = setInterval(() => {
+      setSnapshotRotationIndex((prev) => (prev + 1) % latestSnapshotRows.length);
+    }, 30000);
+
+    return () => clearInterval(rotateInterval);
+  }, [latestSnapshotRows]);
+
+  useEffect(() => {
+    setSnapshotAnimating(true);
+    const animationTimeout = setTimeout(() => {
+      setSnapshotAnimating(false);
+    }, 700);
+
+    return () => clearTimeout(animationTimeout);
+  }, [snapshotRotationIndex, latestRow?.Timestamp]);
 
   const aiInsight = useMemo(() => {
     return getAIInsightSummary(latestRow, sortedData);
@@ -1015,20 +1074,30 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
                     </p>
                   </div>
 
-                  <span className="whitespace-nowrap text-sm text-gray-500">
-                    {formatDisplayDateTime(latestRow.Timestamp)}
+                  <span
+                    className={`whitespace-nowrap text-sm text-gray-500 transition-colors duration-500 ${
+                      snapshotAnimating ? "text-blue-600" : ""
+                    }`}
+                  >
+                    {formatDisplayDateTime(currentDisplayTime)}
                     {refreshingLatest ? " · Refreshing..." : ""}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
                   <div>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3">
+                    <div
+                      className={`grid grid-cols-1 gap-4 transition-all duration-700 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 ${
+                        snapshotAnimating
+                          ? "scale-[0.995] opacity-70"
+                          : "scale-100 opacity-100"
+                      }`}
+                    >
                       {SENSOR_KEYS.map((key) => (
                         <DataCard
                           key={key}
                           sensorKey={key}
-                          value={latestRow[key]}
+                          value={displayedSnapshotRow?.[key]}
                           roundValue={roundValue}
                         />
                       ))}
