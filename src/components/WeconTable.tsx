@@ -18,13 +18,47 @@ type Props = {
   initialArea: string;
 };
 
+type OverallNWQSClass = "I" | "II" | "III" | "IV" | "V" | "N/A";
+
+type DriverSummary = {
+  key: string;
+  label: string;
+  unit: string;
+  latest: number | null;
+  average: number | null;
+  minimum: number | null;
+  maximum: number | null;
+  median: number | null;
+  changePct: number | null;
+  exceedanceCount: number;
+  exceedanceRate: number;
+  severityScore: number;
+  direction: "increasing" | "decreasing" | "stable" | "fluctuating";
+  likelyImpact: string;
+};
+
+type SourceHypothesis = {
+  source: string;
+  confidence: number;
+  reason: string;
+};
+
 type AIDecisionResponse = {
+  title?: string;
+  historicalWindowLabel?: string;
   currentWaterQualityStatus: string;
   pollutionRiskLevel: string;
-  predictedSourceOfPollution: string;
   confidenceScore: number;
-  recommendedAction: string;
   executiveSummary: string;
+  periodOverview?: string;
+  recommendedAction: string;
+  recommendations?: string[];
+  mainContributorSummary?: string;
+  predictedSourceOfPollution: string;
+  sourceRationale?: string;
+  dominantDrivers?: DriverSummary[];
+  likelySources?: SourceHypothesis[];
+  anomalyNotes?: string[];
 };
 
 type DetailedInsightResponse = {
@@ -39,9 +73,10 @@ type DetailedInsightResponse = {
   confidenceDetail?: string;
   recommendationTitle?: string;
   recommendationDetail?: string;
+  driverNarrative?: string;
+  anomalyNarrative?: string;
+  monthlyPatternNarrative?: string;
 };
-
-type OverallNWQSClass = "I" | "II" | "III" | "IV" | "V" | "N/A";
 
 type OverallAssessment = {
   className: OverallNWQSClass;
@@ -60,6 +95,8 @@ type OverallAssessment = {
   }[];
   convertedNH3N: number | null;
 };
+
+type RowData = Record<string, any>;
 
 const SENSOR_KEYS = [
   "Tr_Sensor",
@@ -81,6 +118,7 @@ const SENSOR_META: Record<
     unit: string;
     min: number;
     max: number;
+    severityWeight: number;
   }
 > = {
   Tr_Sensor: {
@@ -89,6 +127,7 @@ const SENSOR_META: Record<
     unit: "mg/L",
     min: 0,
     max: 10000,
+    severityWeight: 0.95,
   },
   BOD_Sensor: {
     label: "Biochemical Oxygen Demand (BOD)",
@@ -96,6 +135,7 @@ const SENSOR_META: Record<
     unit: "mg/L",
     min: 0,
     max: 1000,
+    severityWeight: 1.35,
   },
   DO_Sensor: {
     label: "Dissolved Oxygen (DO)",
@@ -103,6 +143,7 @@ const SENSOR_META: Record<
     unit: "mg/L",
     min: 0,
     max: 20,
+    severityWeight: 1.4,
   },
   COD_Sensor: {
     label: "Chemical Oxygen Demand (COD)",
@@ -110,6 +151,7 @@ const SENSOR_META: Record<
     unit: "mg/L",
     min: 0,
     max: 2000,
+    severityWeight: 1.3,
   },
   NH_Sensor: {
     label: "Ammonia (NH3)",
@@ -117,6 +159,7 @@ const SENSOR_META: Record<
     unit: "mg/L",
     min: 0,
     max: 1000,
+    severityWeight: 1.45,
   },
   TDS_Sensor: {
     label: "Total Dissolved Solids (TDS)",
@@ -124,6 +167,7 @@ const SENSOR_META: Record<
     unit: "mg/L",
     min: 0,
     max: 100000,
+    severityWeight: 0.8,
   },
   CT_Sensor: {
     label: "Conductivity (CT)",
@@ -131,6 +175,7 @@ const SENSOR_META: Record<
     unit: "µS/cm",
     min: 0,
     max: 200000,
+    severityWeight: 0.85,
   },
   ORP_Sensor: {
     label: "Oxidation Reduction Potential (ORP)",
@@ -138,6 +183,7 @@ const SENSOR_META: Record<
     unit: "mV",
     min: -2000,
     max: 2000,
+    severityWeight: 0.75,
   },
   pH_Sensor: {
     label: "Potential of Hydrogen (pH)",
@@ -145,6 +191,7 @@ const SENSOR_META: Record<
     unit: "",
     min: 0,
     max: 14,
+    severityWeight: 1.0,
   },
 };
 
@@ -196,8 +243,10 @@ const CLASS_DISPLAY: Record<
 export default function WeconTable({ initialArea }: Props) {
   const area = initialArea;
 
-  const [data, setData] = useState<any[]>([]);
-  const [latestData, setLatestData] = useState<any[]>([]);
+  const [data, setData] = useState<RowData[]>([]);
+  const [latestData, setLatestData] = useState<RowData[]>([]);
+  const [aiHistoryRows, setAIHistoryRows] = useState<RowData[]>([]);
+
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
 
@@ -208,6 +257,8 @@ export default function WeconTable({ initialArea }: Props) {
   const [retryAttempt, setRetryAttempt] = useState(0);
 
   const [loadingHistorical, setLoadingHistorical] = useState(false);
+  const [loadingAIHistory, setLoadingAIHistory] = useState(false);
+
   const [sortAsc, setSortAsc] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -369,6 +420,28 @@ export default function WeconTable({ initialArea }: Props) {
     }
   }
 
+  function getTodayInMalaysia() {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kuala_Lumpur",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+
+    return formatter.format(new Date());
+  }
+
+  function shiftDate(dateString: string, diffDays: number) {
+    const [year, month, day] = dateString.split("-").map(Number);
+    const d = new Date(year, month - 1, day);
+    d.setDate(d.getDate() + diffDays);
+
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
   async function fetchHistorical(fetchStart: string, fetchEnd: string) {
     if (!fetchStart || !fetchEnd) return;
 
@@ -407,6 +480,22 @@ export default function WeconTable({ initialArea }: Props) {
       console.error("Error refreshing latest:", error);
     } finally {
       setRefreshingLatest(false);
+    }
+  }
+
+  async function fetchThirtyDayAIHistory(endDate: string) {
+    const startDate = shiftDate(endDate, -29);
+
+    setLoadingAIHistory(true);
+    try {
+      const json = await fetchDataByDateRange(area, startDate, endDate);
+      const arr = Array.isArray(json) ? json : [];
+      setAIHistoryRows(arr);
+    } catch (error) {
+      console.error("Failed to load 30-day AI history:", error);
+      setAIHistoryRows([]);
+    } finally {
+      setLoadingAIHistory(false);
     }
   }
 
@@ -462,10 +551,11 @@ export default function WeconTable({ initialArea }: Props) {
 
   async function generateAIDecisionPanel(
     latestRowParam: any,
-    sortedDataParam: any[],
-    aiInsightParam: any
+    historyRowsParam: any[],
+    assessmentParam: OverallAssessment,
+    historicalSummaryParam: any
   ) {
-    if (!latestRowParam) return;
+    if (!latestRowParam || historyRowsParam.length === 0) return;
 
     setLoadingAIDecision(true);
     setAIDecisionError(null);
@@ -478,17 +568,16 @@ export default function WeconTable({ initialArea }: Props) {
         },
         body: JSON.stringify({
           provider: "openai",
-          mode: "decision_summary",
+          mode: "historical_decision_30d",
           latestRow: latestRowParam,
-          rows: sortedDataParam.slice(0, 100),
-          aiInsight: aiInsightParam,
+          rows: historyRowsParam.slice(0, 500),
+          historicalWindowDays: 30,
+          historicalSummary: historicalSummaryParam,
           nwqsSummary: {
-            overallClass: aiInsightParam.overallClass,
-            overallStatus: aiInsightParam.riskLevel,
-            dominantParameters: aiInsightParam.dominantParameters,
-            useRecommendation:
-              aiInsightParam.recommendations?.[0] ||
-              "Continue routine monitoring.",
+            overallClass: assessmentParam.className,
+            overallStatus: assessmentParam.status,
+            dominantReason: assessmentParam.dominantReason,
+            drivers: assessmentParam.drivers,
             lastUpdated: latestRowParam?.Timestamp,
           },
         }),
@@ -500,19 +589,90 @@ export default function WeconTable({ initialArea }: Props) {
         throw new Error(result?.error || "Failed to generate AI decision.");
       }
 
-      setAIDecision(result);
+      setAIDecision({
+        title: result?.title || "30-Day AI Decision Support",
+        historicalWindowLabel:
+          result?.historicalWindowLabel ||
+          historicalSummaryParam?.windowLabel ||
+          "Last 30 days",
+        currentWaterQualityStatus:
+          result?.currentWaterQualityStatus ||
+          `Class ${assessmentParam.className}`,
+        pollutionRiskLevel:
+          result?.pollutionRiskLevel ||
+          deriveRiskLevelFromClass(assessmentParam.className),
+        confidenceScore:
+          typeof result?.confidenceScore === "number"
+            ? result.confidenceScore
+            : historicalSummaryParam.confidenceScore,
+        executiveSummary:
+          result?.executiveSummary ||
+          buildHistoricalExecutiveSummary(historicalSummaryParam, assessmentParam),
+        periodOverview:
+          result?.periodOverview ||
+          buildPeriodOverview(historicalSummaryParam),
+        recommendedAction:
+          result?.recommendedAction ||
+          buildRecommendedActionFallback(historicalSummaryParam),
+        recommendations:
+          result?.recommendations ||
+          buildRecommendationListFallback(historicalSummaryParam),
+        predictedSourceOfPollution:
+          result?.predictedSourceOfPollution ||
+          historicalSummaryParam.primarySource?.source ||
+          "Potential mixed-source pollution",
+        sourceRationale:
+          result?.sourceRationale ||
+          historicalSummaryParam.primarySource?.reason ||
+          "This source hypothesis is based on the 30-day parameter pattern.",
+        mainContributorSummary:
+          result?.mainContributorSummary ||
+          buildMainContributorSummary(historicalSummaryParam.topDrivers),
+        dominantDrivers:
+          result?.dominantDrivers || historicalSummaryParam.topDrivers,
+        likelySources:
+          result?.likelySources || historicalSummaryParam.sourceHypotheses,
+        anomalyNotes:
+          result?.anomalyNotes || historicalSummaryParam.anomalyNotes,
+      });
     } catch (error: any) {
       setAIDecisionError(
         error?.message || "Failed to generate AI decision panel."
       );
-      setAIDecision(null);
+
+      setAIDecision({
+        title: "30-Day AI Decision Support",
+        historicalWindowLabel: historicalSummaryParam.windowLabel,
+        currentWaterQualityStatus: `Class ${assessmentParam.className}`,
+        pollutionRiskLevel: deriveRiskLevelFromClass(assessmentParam.className),
+        confidenceScore: historicalSummaryParam.confidenceScore,
+        executiveSummary: buildHistoricalExecutiveSummary(
+          historicalSummaryParam,
+          assessmentParam
+        ),
+        periodOverview: buildPeriodOverview(historicalSummaryParam),
+        recommendedAction: buildRecommendedActionFallback(historicalSummaryParam),
+        recommendations: buildRecommendationListFallback(historicalSummaryParam),
+        predictedSourceOfPollution:
+          historicalSummaryParam.primarySource?.source ||
+          "Potential mixed-source pollution",
+        sourceRationale:
+          historicalSummaryParam.primarySource?.reason ||
+          "This source hypothesis is based on the 30-day parameter pattern.",
+        mainContributorSummary: buildMainContributorSummary(
+          historicalSummaryParam.topDrivers
+        ),
+        dominantDrivers: historicalSummaryParam.topDrivers,
+        likelySources: historicalSummaryParam.sourceHypotheses,
+        anomalyNotes: historicalSummaryParam.anomalyNotes,
+      });
     } finally {
       setLoadingAIDecision(false);
     }
   }
 
   async function handleGetMoreAIInsight() {
-    if (!latestRow) return;
+    if (!latestRow || aiThirtyDayRows.length === 0) return;
 
     setShowInsightModal(true);
     setLoadingDetailedInsight(true);
@@ -526,18 +686,17 @@ export default function WeconTable({ initialArea }: Props) {
         },
         body: JSON.stringify({
           provider: "openai",
-          mode: "expanded_decision_detail",
+          mode: "expanded_historical_decision_detail",
           latestRow,
-          rows: sortedData.slice(0, 150),
-          aiInsight,
+          rows: aiThirtyDayRows.slice(0, 500),
           aiDecision,
+          historicalWindowDays: 30,
+          historicalSummary: aiHistoricalSummary,
           nwqsSummary: {
-            overallClass: aiInsight.overallClass,
-            overallStatus: aiDecision?.pollutionRiskLevel || aiInsight.riskLevel,
-            dominantParameters: aiInsight.dominantParameters,
-            recommendations: aiInsight.recommendations || [],
-            anomalies: aiInsight.anomalies || [],
-            trendSummary: aiInsight.trendSummary || [],
+            overallClass: latestAssessment.className,
+            overallStatus: latestAssessment.status,
+            dominantReason: latestAssessment.dominantReason,
+            drivers: latestAssessment.drivers,
             lastUpdated: latestRow?.Timestamp,
           },
         }),
@@ -551,67 +710,75 @@ export default function WeconTable({ initialArea }: Props) {
         );
       }
 
-      const fallbackPrediction = `${
-        aiDecision?.currentWaterQualityStatus || `Class ${aiInsight.overallClass}`
-      } is the predicted current water quality condition based on the latest sensor readings and recent historical trend pattern. This classification indicates that the river is currently operating under a degraded condition and requires closer attention from monitoring personnel.`;
-
-      const fallbackInterpretation =
-        aiDecision?.executiveSummary ||
-        `The current water quality condition is interpreted as ${
-          aiDecision?.pollutionRiskLevel || aiInsight.riskLevel
-        }. This interpretation is supported by the dominance of ${
-          aiInsight.dominantParameters?.length
-            ? aiInsight.dominantParameters.join(", ")
-            : "multiple critical parameters"
-        }, together with recent anomaly signals and trend movement.`;
-
-      const fallbackSource = `${
-        aiDecision?.predictedSourceOfPollution || getPredictedSource(aiInsight)
-      }. This hypothesis is derived from the pattern of elevated organic load, ammonia-related stress, conductivity or turbidity shifts, and supporting anomaly indicators.`;
-
-      const fallbackConfidence = `The confidence score of ${
-        aiDecision?.confidenceScore ||
-        Math.min(95, Math.max(60, aiInsight.riskScore))
-      }% indicates the model has reasonably strong certainty in its present assessment. This should still be interpreted alongside field validation and operational judgement.`;
-
-      const fallbackRecommendation = `${
-        aiDecision?.recommendedAction ||
-        aiInsight.recommendations?.[0] ||
-        "Continue routine monitoring."
-      } This recommendation is prioritised because the current signal pattern suggests elevated environmental risk and should be followed by verification in the field.`;
-
       setDetailedInsight({
         overallNarrative:
           result?.overallNarrative ||
-          "This expanded AI insight provides a more detailed explanation of the current river condition by elaborating the prediction, interpretation, possible pollution source, confidence level, and operational recommendation.",
-        predictionTitle: result?.predictionTitle || "AI Prediction",
-        predictionDetail: result?.predictionDetail || fallbackPrediction,
+          buildModalOverallNarrative(aiHistoricalSummary, latestAssessment),
+        predictionTitle: result?.predictionTitle || "30-Day AI Prediction",
+        predictionDetail:
+          result?.predictionDetail ||
+          buildPredictionDetail(aiHistoricalSummary, latestAssessment),
         interpretationTitle:
-          result?.interpretationTitle || "AI Interpretation",
+          result?.interpretationTitle || "Historical AI Interpretation",
         interpretationDetail:
-          result?.interpretationDetail || fallbackInterpretation,
+          result?.interpretationDetail ||
+          buildInterpretationDetail(aiHistoricalSummary, latestAssessment),
         sourceTitle:
           result?.sourceTitle || "Predicted Source of Pollution",
-        sourceDetail: result?.sourceDetail || fallbackSource,
+        sourceDetail:
+          result?.sourceDetail || buildSourceDetail(aiHistoricalSummary),
         confidenceTitle: result?.confidenceTitle || "AI Confidence",
-        confidenceDetail: result?.confidenceDetail || fallbackConfidence,
+        confidenceDetail:
+          result?.confidenceDetail || buildConfidenceDetail(aiHistoricalSummary),
         recommendationTitle:
           result?.recommendationTitle || "AI Recommendation",
         recommendationDetail:
-          result?.recommendationDetail || fallbackRecommendation,
+          result?.recommendationDetail ||
+          buildRecommendationDetail(aiHistoricalSummary),
+        driverNarrative:
+          result?.driverNarrative || buildDriverNarrative(aiHistoricalSummary),
+        anomalyNarrative:
+          result?.anomalyNarrative || buildAnomalyNarrative(aiHistoricalSummary),
+        monthlyPatternNarrative:
+          result?.monthlyPatternNarrative ||
+          buildMonthlyPatternNarrative(aiHistoricalSummary),
       });
     } catch (error: any) {
       setDetailedInsightError(
         error?.message || "Failed to generate more detailed AI insight."
       );
-      setDetailedInsight(null);
+      setDetailedInsight({
+        overallNarrative: buildModalOverallNarrative(
+          aiHistoricalSummary,
+          latestAssessment
+        ),
+        predictionTitle: "30-Day AI Prediction",
+        predictionDetail: buildPredictionDetail(
+          aiHistoricalSummary,
+          latestAssessment
+        ),
+        interpretationTitle: "Historical AI Interpretation",
+        interpretationDetail: buildInterpretationDetail(
+          aiHistoricalSummary,
+          latestAssessment
+        ),
+        sourceTitle: "Predicted Source of Pollution",
+        sourceDetail: buildSourceDetail(aiHistoricalSummary),
+        confidenceTitle: "AI Confidence",
+        confidenceDetail: buildConfidenceDetail(aiHistoricalSummary),
+        recommendationTitle: "AI Recommendation",
+        recommendationDetail: buildRecommendationDetail(aiHistoricalSummary),
+        driverNarrative: buildDriverNarrative(aiHistoricalSummary),
+        anomalyNarrative: buildAnomalyNarrative(aiHistoricalSummary),
+        monthlyPatternNarrative: buildMonthlyPatternNarrative(aiHistoricalSummary),
+      });
     } finally {
       setLoadingDetailedInsight(false);
     }
   }
 
   useEffect(() => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayInMalaysia();
     setStart(today);
     setEnd(today);
     setCurrentPage(1);
@@ -642,7 +809,11 @@ export default function WeconTable({ initialArea }: Props) {
         setLoadingStage("connecting");
         await validateLocation(area);
         setLoadingStage("loading");
-        await Promise.all([fetchHistorical(today, today), fetchLatestSnapshot()]);
+        await Promise.all([
+          fetchHistorical(today, today),
+          fetchLatestSnapshot(),
+          fetchThirtyDayAIHistory(today),
+        ]);
       } catch {
         setErrorMsg("Failed to load initial data");
       } finally {
@@ -658,6 +829,8 @@ export default function WeconTable({ initialArea }: Props) {
     const interval = setInterval(() => {
       if (document.hidden) return;
       fetchLatestSnapshot();
+      const today = getTodayInMalaysia();
+      fetchThirtyDayAIHistory(today);
     }, 60000);
 
     return () => clearInterval(interval);
@@ -701,6 +874,14 @@ export default function WeconTable({ initialArea }: Props) {
     });
   }, [data, sortAsc]);
 
+  const aiThirtyDayRows = useMemo(() => {
+    const filtered = [...aiHistoryRows].filter(hasValidSensorData);
+
+    return filtered.sort(
+      (a, b) => parseTimestamp(a.Timestamp) - parseTimestamp(b.Timestamp)
+    );
+  }, [aiHistoryRows]);
+
   const latestRow = useMemo(() => {
     return latestData.length ? latestData[0] : null;
   }, [latestData]);
@@ -738,7 +919,7 @@ export default function WeconTable({ initialArea }: Props) {
       setSnapshotRotationIndex(
         (prev) => (prev + 1) % latestSnapshotRows.length
       );
-    }, 30000);
+    }, 300000);
 
     return () => clearInterval(rotateInterval);
   }, [latestSnapshotRows]);
@@ -756,16 +937,42 @@ export default function WeconTable({ initialArea }: Props) {
     return getAIInsightSummary(latestRow, sortedData);
   }, [latestRow, sortedData]);
 
+  const latestAssessment = useMemo(() => {
+    return assessOverallWaterQuality(displayedSnapshotRow);
+  }, [displayedSnapshotRow]);
+
+  const aiHistoricalSummary = useMemo(() => {
+    return buildThirtyDayHistoricalSummary(
+      aiThirtyDayRows,
+      latestRow,
+      latestAssessment
+    );
+  }, [aiThirtyDayRows, latestRow, latestAssessment]);
+
   const confidencePercentage = useMemo(() => {
-    if (aiDecision?.confidenceScore) return aiDecision.confidenceScore;
-    return Math.min(95, Math.max(60, aiInsight.riskScore));
-  }, [aiDecision?.confidenceScore, aiInsight.riskScore]);
+    if (typeof aiDecision?.confidenceScore === "number") {
+      return aiDecision.confidenceScore;
+    }
+    return aiHistoricalSummary.confidenceScore;
+  }, [aiDecision?.confidenceScore, aiHistoricalSummary.confidenceScore]);
 
   const likelyContributor = useMemo(() => {
-    return aiInsight.dominantParameters.length > 0
-      ? aiInsight.dominantParameters.join(", ")
-      : "Not identified";
-  }, [aiInsight.dominantParameters]);
+    if (aiDecision?.dominantDrivers?.length) {
+      return aiDecision.dominantDrivers
+        .slice(0, 3)
+        .map((item) => item.label)
+        .join(", ");
+    }
+
+    if (aiHistoricalSummary.topDrivers.length > 0) {
+      return aiHistoricalSummary.topDrivers
+        .slice(0, 3)
+        .map((item) => item.label)
+        .join(", ");
+    }
+
+    return "Not identified";
+  }, [aiDecision?.dominantDrivers, aiHistoricalSummary.topDrivers]);
 
   const exceedanceIndicators = useMemo(() => {
     if (!latestRow) return [];
@@ -776,22 +983,19 @@ export default function WeconTable({ initialArea }: Props) {
   }, [latestRow]);
 
   const keyTrendItems = useMemo(() => {
-    return aiInsight.trendSummary
+    return aiHistoricalSummary.topDrivers
       .filter(
-        (item: any) =>
+        (item) =>
           item.direction === "increasing" ||
           item.direction === "decreasing" ||
           item.direction === "fluctuating"
       )
       .slice(0, 5);
-  }, [aiInsight.trendSummary]);
-
-  const latestAssessment = useMemo(() => {
-    return assessOverallWaterQuality(displayedSnapshotRow);
-  }, [displayedSnapshotRow]);
+  }, [aiHistoricalSummary.topDrivers]);
 
   const activeRiskLevel =
-    aiDecision?.pollutionRiskLevel || aiInsight.riskLevel || "Moderate";
+    aiDecision?.pollutionRiskLevel ||
+    deriveRiskLevelFromClass(latestAssessment.className);
 
   const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
@@ -814,10 +1018,15 @@ export default function WeconTable({ initialArea }: Props) {
   }, [sortedData]);
 
   useEffect(() => {
-    if (latestRow && sortedData.length > 0) {
-      generateAIDecisionPanel(latestRow, sortedData, aiInsight);
+    if (latestRow && aiThirtyDayRows.length > 0) {
+      generateAIDecisionPanel(
+        latestRow,
+        aiThirtyDayRows,
+        latestAssessment,
+        aiHistoricalSummary
+      );
     }
-  }, [latestRow, sortedData, aiInsight]);
+  }, [latestRow, aiThirtyDayRows, latestAssessment, aiHistoricalSummary]);
 
   useEffect(() => {
     if (displayedSnapshotRow) {
@@ -883,6 +1092,37 @@ export default function WeconTable({ initialArea }: Props) {
           ],
         ],
         styles: { fontSize: 9 },
+        theme: "grid",
+      });
+    }
+
+    if (aiHistoricalSummary?.topDrivers?.length) {
+      currentY =
+        (pdf as any).lastAutoTable?.finalY !== undefined
+          ? (pdf as any).lastAutoTable.finalY + 8
+          : 100;
+
+      autoTable(pdf, {
+        startY: currentY,
+        head: [
+          [
+            "30-Day Driver",
+            "Average",
+            "Latest",
+            "Max",
+            "Trend",
+            "Exceedance Rate",
+          ],
+        ],
+        body: aiHistoricalSummary.topDrivers.map((driver: DriverSummary) => [
+          driver.label,
+          formatMetric(driver.average, driver.unit),
+          formatMetric(driver.latest, driver.unit),
+          formatMetric(driver.maximum, driver.unit),
+          driver.direction,
+          `${driver.exceedanceRate}%`,
+        ]),
+        styles: { fontSize: 8 },
         theme: "grid",
       });
     }
@@ -1101,7 +1341,7 @@ export default function WeconTable({ initialArea }: Props) {
               <div
                 className={`overflow-hidden rounded-3xl border p-0 shadow-sm ring-4 ${heroStyles.shell} ${heroStyles.ring}`}
               >
-                <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_0.9fr]">
+                <div className="grid grid-cols-1 lg:grid-cols-[1.45fr_0.95fr]">
                   <div className="p-6 md:p-8">
                     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
                       <div>
@@ -1109,17 +1349,34 @@ export default function WeconTable({ initialArea }: Props) {
                           <span
                             className={`h-2.5 w-2.5 rounded-full ${heroStyles.accent}`}
                           />
-                          AI Decision Support
+                          {aiDecision?.title || "30-Day AI Decision Support"}
                         </div>
 
                         <h2 className="text-2xl font-bold tracking-tight text-gray-900 md:text-3xl">
                           {aiDecision?.currentWaterQualityStatus ||
-                            `Class ${aiInsight.overallClass}`}
+                            `Class ${latestAssessment.className}`}
                         </h2>
 
                         <p className="mt-2 max-w-3xl text-sm leading-7 text-gray-600 md:text-base">
-                          {aiDecision?.executiveSummary || buildInsightText(aiInsight)}
+                          {loadingAIHistory
+                            ? "Preparing 30-day historical analysis..."
+                            : aiDecision?.executiveSummary ||
+                              buildHistoricalExecutiveSummary(
+                                aiHistoricalSummary,
+                                latestAssessment
+                              )}
                         </p>
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span className="inline-flex items-center rounded-full border border-white/80 bg-white/70 px-3 py-1 text-xs font-medium text-gray-700">
+                            Window:{" "}
+                            {aiDecision?.historicalWindowLabel ||
+                              aiHistoricalSummary.windowLabel}
+                          </span>
+                          <span className="inline-flex items-center rounded-full border border-white/80 bg-white/70 px-3 py-1 text-xs font-medium text-gray-700">
+                            Records: {aiHistoricalSummary.recordCount}
+                          </span>
+                        </div>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
@@ -1137,30 +1394,56 @@ export default function WeconTable({ initialArea }: Props) {
                       </div>
                     </div>
 
+                    <div className="mb-4 rounded-2xl border border-white/70 bg-white/75 p-4 backdrop-blur">
+                      <p className="text-xs uppercase tracking-[0.2em] text-gray-500">
+                        30-Day Period Overview
+                      </p>
+                      <p className="mt-2 text-sm leading-7 text-gray-700">
+                        {aiDecision?.periodOverview ||
+                          buildPeriodOverview(aiHistoricalSummary)}
+                      </p>
+                    </div>
+
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      <HeroMetricCard
+                        title="Likely Main Contributors"
+                        value={
+                          aiDecision?.mainContributorSummary || likelyContributor
+                        }
+                        hint="Dominant parameters over the last 30 days"
+                      />
                       <HeroMetricCard
                         title="Predicted Source of Pollution"
                         value={
                           aiDecision?.predictedSourceOfPollution ||
-                          getPredictedSource(aiInsight)
+                          aiHistoricalSummary.primarySource?.source ||
+                          "Potential mixed-source pollution"
                         }
-                        hint="Likely pollution hypothesis"
+                        hint="Historical pollution source hypothesis"
                       />
                       <HeroMetricCard
                         title="Recommended Action"
                         value={
                           aiDecision?.recommendedAction ||
-                          aiInsight.recommendations?.[0] ||
-                          "Continue routine monitoring."
+                          buildRecommendedActionFallback(aiHistoricalSummary)
                         }
-                        hint="Primary next step"
-                      />
-                      <HeroMetricCard
-                        title="Likely Contributor"
-                        value={likelyContributor}
-                        hint="Dominant detected parameter"
+                        hint="Priority response based on the 30-day pattern"
                       />
                     </div>
+
+                    {aiHistoricalSummary.topDrivers.length > 0 && (
+                      <div className="mt-5 rounded-2xl border border-white/70 bg-white/75 p-4 backdrop-blur">
+                        <p className="mb-3 text-xs uppercase tracking-[0.2em] text-gray-500">
+                          Top Parameter Drivers
+                        </p>
+
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                          {aiHistoricalSummary.topDrivers.slice(0, 3).map((driver) => (
+                            <DriverImpactCard key={driver.key} driver={driver} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="border-t border-white/60 bg-white/70 p-6 backdrop-blur lg:border-l lg:border-t-0">
@@ -1170,7 +1453,7 @@ export default function WeconTable({ initialArea }: Props) {
                           AI Interpretation
                         </p>
                         <h3 className="mt-1 text-lg font-semibold text-gray-900">
-                          Decision Summary
+                          30-Day Decision Summary
                         </h3>
                       </div>
 
@@ -1190,30 +1473,45 @@ export default function WeconTable({ initialArea }: Props) {
                         label="AI Prediction"
                         value={
                           aiDecision?.currentWaterQualityStatus ||
-                          `Class ${aiInsight.overallClass}`
+                          `Class ${latestAssessment.className}`
                         }
                       />
                       <MiniDecisionRow
-                        label="AI Interpretation"
+                        label="Historical AI Interpretation"
                         value={activeRiskLevel}
+                      />
+                      <MiniDecisionRow
+                        label="Analysis Window"
+                        value={
+                          aiDecision?.historicalWindowLabel ||
+                          aiHistoricalSummary.windowLabel
+                        }
                       />
                       <MiniDecisionRow
                         label="AI Confidence"
                         value={`${confidencePercentage}%`}
                       />
                       <MiniDecisionRow
+                        label="Likely Pollution Source"
+                        value={
+                          aiDecision?.predictedSourceOfPollution ||
+                          aiHistoricalSummary.primarySource?.source ||
+                          "Potential mixed-source pollution"
+                        }
+                      />
+                      <MiniDecisionRow
                         label="AI Recommendation"
                         value={
                           aiDecision?.recommendedAction ||
-                          aiInsight.recommendations?.[0] ||
-                          "Continue routine monitoring."
+                          buildRecommendedActionFallback(aiHistoricalSummary)
                         }
                       />
                     </div>
 
                     <button
                       onClick={handleGetMoreAIInsight}
-                      className="mt-5 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-indigo-700"
+                      disabled={aiThirtyDayRows.length === 0 || loadingAIHistory}
+                      className="mt-5 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Get More AI Insight
                     </button>
@@ -1232,8 +1530,8 @@ export default function WeconTable({ initialArea }: Props) {
                     <span>Supporting Data Visualization</span>
                   </h2>
                   <p className="mt-1 text-sm text-gray-500">
-                    AI decides first, graphs and indicators support the
-                    interpretation
+                    AI decision uses the last 30 days, graphs remain available for
+                    supporting interpretation
                   </p>
                 </div>
 
@@ -1247,14 +1545,17 @@ export default function WeconTable({ initialArea }: Props) {
 
               <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <SmallInfoPanel
-                  title="Trend Highlights"
+                  title="30-Day Trend Highlights"
                   items={
                     keyTrendItems.length > 0
                       ? keyTrendItems.map(
-                          (item: any) =>
-                            `${item.label}: ${item.direction} (${item.changePct}%)`
+                          (item) =>
+                            `${item.label}: ${item.direction}, avg ${formatMetric(
+                              item.average,
+                              item.unit
+                            )}, latest ${formatMetric(item.latest, item.unit)}`
                         )
-                      : ["No significant trend shift detected."]
+                      : ["No significant 30-day trend shift detected."]
                   }
                 />
 
@@ -1263,7 +1564,11 @@ export default function WeconTable({ initialArea }: Props) {
                   items={[
                     `Likely contributor: ${likelyContributor}`,
                     `Risk level: ${activeRiskLevel}`,
-                    `Class prediction: ${aiInsight.overallClass}`,
+                    `Predicted source: ${
+                      aiDecision?.predictedSourceOfPollution ||
+                      aiHistoricalSummary.primarySource?.source ||
+                      "Potential mixed-source pollution"
+                    }`,
                   ]}
                 />
 
@@ -1435,8 +1740,13 @@ export default function WeconTable({ initialArea }: Props) {
           timestamp={latestRow?.Timestamp || ""}
           decision={aiDecision}
           confidencePercentage={confidencePercentage}
-          fallbackSource={getPredictedSource(aiInsight)}
-          fallbackClass={`Class ${aiInsight.overallClass}`}
+          fallbackSource={
+            aiDecision?.predictedSourceOfPollution ||
+            aiHistoricalSummary.primarySource?.source ||
+            "Potential mixed-source pollution"
+          }
+          fallbackClass={`Class ${latestAssessment.className}`}
+          historicalSummary={aiHistoricalSummary}
         />
       )}
     </>
@@ -1498,6 +1808,22 @@ function buildQuickInsightFallback(
   return `The latest snapshot indicates a ${assessment.status.toLowerCase()} water quality condition at Class ${
     assessment.className
   }, mainly influenced by ${drivers}. This suggests that the river is currently under elevated pollution stress and should be reviewed together with recent trend movement. ${recommendation}`;
+}
+
+function deriveRiskLevelFromClass(className: OverallNWQSClass) {
+  switch (className) {
+    case "I":
+    case "II":
+      return "Low";
+    case "III":
+      return "Moderate";
+    case "IV":
+      return "High";
+    case "V":
+      return "Critical";
+    default:
+      return "Moderate";
+  }
 }
 
 function isValueOutOfPhysicalRange(sensorKey: string, value: any) {
@@ -1687,6 +2013,557 @@ function assessOverallWaterQuality(row: any): OverallAssessment {
   };
 }
 
+function formatMetric(value: number | null, unit?: string) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${value.toFixed(2)}${unit ? ` ${unit}` : ""}`;
+}
+
+function mean(values: number[]) {
+  if (values.length === 0) return null;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+function median(values: number[]) {
+  if (values.length === 0) return null;
+  const arr = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(arr.length / 2);
+  if (arr.length % 2 === 0) {
+    return (arr[mid - 1] + arr[mid]) / 2;
+  }
+  return arr[mid];
+}
+
+function min(values: number[]) {
+  if (values.length === 0) return null;
+  return Math.min(...values);
+}
+
+function max(values: number[]) {
+  if (values.length === 0) return null;
+  return Math.max(...values);
+}
+
+function getDirection(first: number | null, last: number | null, series: number[]) {
+  if (series.length < 3 || first === null || last === null) return "stable";
+
+  const spread = (max(series) || 0) - (min(series) || 0);
+  const delta = last - first;
+  const pctBase = Math.abs(first) < 0.001 ? 1 : Math.abs(first);
+  const changePct = (delta / pctBase) * 100;
+
+  if (spread > 0 && Math.abs(changePct) < 5 && spread / Math.max(1, Math.abs(mean(series) || 1)) > 0.35) {
+    return "fluctuating";
+  }
+
+  if (changePct > 5) return "increasing";
+  if (changePct < -5) return "decreasing";
+  return "stable";
+}
+
+function getThresholdClass(sensorKey: string, value: number | null): OverallNWQSClass {
+  switch (sensorKey) {
+    case "BOD_Sensor":
+      return getClassFromBOD(value);
+    case "COD_Sensor":
+      return getClassFromCOD(value);
+    case "DO_Sensor":
+      return getClassFromDO(value);
+    case "pH_Sensor":
+      return getClassFromPH(value);
+    case "NH_Sensor":
+      return getClassFromNH3N(convertNH3ToNH3N(value));
+    default:
+      if (value === null) return "N/A";
+      return "II";
+  }
+}
+
+function getLikelyImpact(sensorKey: string, direction: string, avg: number | null) {
+  switch (sensorKey) {
+    case "BOD_Sensor":
+      return direction === "increasing"
+        ? "Organic load is increasing and may elevate oxygen demand."
+        : "Organic load remains a contributor to water stress.";
+    case "COD_Sensor":
+      return direction === "increasing"
+        ? "Chemical/oxidizable pollution pressure is increasing."
+        : "COD indicates persistent oxidizable pollutant load.";
+    case "NH_Sensor":
+      return direction === "increasing"
+        ? "Ammonia accumulation suggests wastewater or agricultural influence."
+        : "Ammonia remains an important toxicity-related parameter.";
+    case "DO_Sensor":
+      return avg !== null && avg < 3
+        ? "Low dissolved oxygen suggests ecological stress and organic pollution."
+        : "DO variation indicates changing oxygen balance in the river.";
+    case "Tr_Sensor":
+      return "Turbidity indicates runoff, erosion, or suspended solids input.";
+    case "CT_Sensor":
+      return "Conductivity may reflect dissolved ions and possible effluent input.";
+    case "TDS_Sensor":
+      return "TDS indicates elevated dissolved solids concentration.";
+    case "pH_Sensor":
+      return "pH shift suggests chemical imbalance affecting aquatic suitability.";
+    case "ORP_Sensor":
+      return "ORP change reflects shifts in oxidation-reduction conditions.";
+    default:
+      return "This parameter contributes to overall water quality behaviour.";
+  }
+}
+
+function buildDriverSummary(rows: RowData[], sensorKey: string): DriverSummary {
+  const meta = SENSOR_META[sensorKey];
+  const numericSeries = rows
+    .map((row) => toNullableNumber(row[sensorKey]))
+    .filter((v): v is number => v !== null);
+
+  const first = numericSeries.length ? numericSeries[0] : null;
+  const latest = numericSeries.length ? numericSeries[numericSeries.length - 1] : null;
+  const average = mean(numericSeries);
+  const minimum = min(numericSeries);
+  const maximum = max(numericSeries);
+  const med = median(numericSeries);
+  const direction = getDirection(first, latest, numericSeries);
+
+  const changePct =
+    first !== null &&
+    latest !== null &&
+    Math.abs(first) > 0.0001
+      ? ((latest - first) / Math.abs(first)) * 100
+      : first === 0 && latest !== null
+      ? latest * 100
+      : null;
+
+  const exceedanceCount = numericSeries.filter((value) => {
+    const className = getThresholdClass(sensorKey, value);
+    return className === "IV" || className === "V";
+  }).length;
+
+  const exceedanceRate =
+    numericSeries.length > 0
+      ? Math.round((exceedanceCount / numericSeries.length) * 100)
+      : 0;
+
+  const severityBase =
+    (Math.abs(changePct || 0) * 0.15) +
+    (exceedanceRate * 0.7) +
+    ((maximum || 0) > 0 ? Math.min((maximum || 0) * 0.05, 25) : 0);
+
+  let classPenalty = 0;
+  if (sensorKey === "BOD_Sensor") {
+    classPenalty = classSeverity(getClassFromBOD(latest)) * 12;
+  } else if (sensorKey === "COD_Sensor") {
+    classPenalty = classSeverity(getClassFromCOD(latest)) * 12;
+  } else if (sensorKey === "DO_Sensor") {
+    classPenalty = classSeverity(getClassFromDO(latest)) * 12;
+  } else if (sensorKey === "NH_Sensor") {
+    classPenalty = classSeverity(getClassFromNH3N(convertNH3ToNH3N(latest))) * 12;
+  } else if (sensorKey === "pH_Sensor") {
+    classPenalty = classSeverity(getClassFromPH(latest)) * 10;
+  } else {
+    classPenalty = exceedanceRate * 0.25;
+  }
+
+  const severityScore = Number(
+    (severityBase + classPenalty) * meta.severityWeight
+  );
+
+  return {
+    key: sensorKey,
+    label: meta.shortLabel,
+    unit: meta.unit,
+    latest,
+    average,
+    minimum,
+    maximum,
+    median: med,
+    changePct,
+    exceedanceCount,
+    exceedanceRate,
+    severityScore,
+    direction,
+    likelyImpact: getLikelyImpact(sensorKey, direction, average),
+  };
+}
+
+function inferSourceHypotheses(topDrivers: DriverSummary[], latestRow: RowData | null) {
+  const getDriver = (key: string) => topDrivers.find((d) => d.key === key);
+
+  const bod = getDriver("BOD_Sensor");
+  const cod = getDriver("COD_Sensor");
+  const nh = getDriver("NH_Sensor");
+  const tr = getDriver("Tr_Sensor");
+  const ct = getDriver("CT_Sensor");
+  const tds = getDriver("TDS_Sensor");
+  const ph = getDriver("pH_Sensor");
+  const doVal = getDriver("DO_Sensor");
+
+  const hypotheses: SourceHypothesis[] = [];
+
+  if (
+    (bod && bod.severityScore > 35) &&
+    (nh && nh.severityScore > 35) &&
+    (doVal && (doVal.latest ?? 99) < 4)
+  ) {
+    hypotheses.push({
+      source: "Domestic wastewater or sewage discharge",
+      confidence: 88,
+      reason:
+        "Elevated BOD and ammonia combined with low dissolved oxygen over the 30-day window strongly suggest untreated or partially treated wastewater input.",
+    });
+  }
+
+  if (
+    (cod && cod.severityScore > 35) &&
+    ((ct && ct.severityScore > 25) || (ph && ph.exceedanceRate > 20))
+  ) {
+    hypotheses.push({
+      source: "Industrial or chemical discharge",
+      confidence: 84,
+      reason:
+        "Persistent COD stress together with conductivity or pH abnormality suggests the presence of chemical or industrial effluent influence.",
+    });
+  }
+
+  if (
+    (tr && tr.severityScore > 28) &&
+    ((tds && tds.severityScore > 18) || (latestRow && toNullableNumber(latestRow.Tr_Sensor)! > 100))
+  ) {
+    hypotheses.push({
+      source: "Sediment runoff, erosion, or land disturbance",
+      confidence: 80,
+      reason:
+        "High and fluctuating turbidity across the month suggests suspended solids input from runoff, erosion, or disturbed riverbank activity.",
+    });
+  }
+
+  if (
+    (nh && nh.severityScore > 30) &&
+    !(cod && cod.severityScore > 35) &&
+    !(ct && ct.severityScore > 25)
+  ) {
+    hypotheses.push({
+      source: "Agricultural runoff or livestock-related pollution",
+      confidence: 77,
+      reason:
+        "Ammonia pressure without equally dominant chemical conductivity signals may indicate nutrient-rich runoff from agriculture or livestock areas.",
+    });
+  }
+
+  if (hypotheses.length === 0) {
+    hypotheses.push({
+      source: "Mixed-source pollution requiring field verification",
+      confidence: 68,
+      reason:
+        "The last 30 days show combined stress across several parameters, but the pattern is not specific enough to isolate a single dominant source.",
+    });
+  }
+
+  return hypotheses.sort((a, b) => b.confidence - a.confidence).slice(0, 3);
+}
+
+function buildThirtyDayHistoricalSummary(
+  rows: RowData[],
+  latestRow: RowData | null,
+  assessment: OverallAssessment
+) {
+  const validRows = rows.filter(Boolean);
+  const topDrivers = SENSOR_KEYS.map((key) => buildDriverSummary(validRows, key))
+    .sort((a, b) => b.severityScore - a.severityScore)
+    .slice(0, 5);
+
+  const sourceHypotheses = inferSourceHypotheses(topDrivers, latestRow);
+  const primarySource = sourceHypotheses[0] || null;
+
+  const anomalyNotes = topDrivers.slice(0, 4).map((driver) => {
+    const trendText =
+      driver.changePct !== null
+        ? `${driver.changePct >= 0 ? "+" : ""}${driver.changePct.toFixed(1)}%`
+        : "insufficient trend data";
+
+    return `${driver.label} shows ${driver.direction} behaviour over 30 days with avg ${formatMetric(
+      driver.average,
+      driver.unit
+    )}, latest ${formatMetric(driver.latest, driver.unit)}, max ${formatMetric(
+      driver.maximum,
+      driver.unit
+    )}, exceedance rate ${driver.exceedanceRate}%, trend ${trendText}.`;
+  });
+
+  const confidenceScore = Math.min(
+    97,
+    Math.max(
+      62,
+      Math.round(
+        62 +
+          topDrivers.slice(0, 3).reduce((sum, driver) => sum + driver.exceedanceRate * 0.18, 0) +
+          (validRows.length >= 50 ? 8 : validRows.length >= 20 ? 5 : 2)
+      )
+    )
+  );
+
+  const pollutedDrivers = topDrivers
+    .filter((driver) => driver.exceedanceRate >= 20 || driver.severityScore >= 30)
+    .map((driver) => driver.label);
+
+  const classLabel =
+    assessment.className === "N/A"
+      ? "Unclassified"
+      : `Class ${assessment.className}`;
+
+  return {
+    recordCount: validRows.length,
+    windowLabel: "Last 30 days",
+    classLabel,
+    topDrivers,
+    sourceHypotheses,
+    primarySource,
+    anomalyNotes,
+    pollutedDrivers,
+    confidenceScore,
+  };
+}
+
+function buildMainContributorSummary(drivers: DriverSummary[]) {
+  if (!drivers.length) return "No dominant parameter identified.";
+  return drivers
+    .slice(0, 3)
+    .map(
+      (driver) =>
+        `${driver.label} (avg ${formatMetric(driver.average, driver.unit)}, latest ${formatMetric(
+          driver.latest,
+          driver.unit
+        )})`
+    )
+    .join("; ");
+}
+
+function buildPeriodOverview(summary: any) {
+  if (!summary?.topDrivers?.length) {
+    return "No sufficient 30-day data is available to describe the historical pattern.";
+  }
+
+  const first = summary.topDrivers[0];
+  const second = summary.topDrivers[1];
+  const third = summary.topDrivers[2];
+
+  const segments = [
+    `${first.label} was the strongest monthly driver with an average of ${formatMetric(
+      first.average,
+      first.unit
+    )}, latest value ${formatMetric(first.latest, first.unit)}, and exceedance rate ${
+      first.exceedanceRate
+    }%.`,
+  ];
+
+  if (second) {
+    segments.push(
+      `${second.label} also remained influential with ${second.direction} movement and a monthly maximum of ${formatMetric(
+        second.maximum,
+        second.unit
+      )}.`
+    );
+  }
+
+  if (third) {
+    segments.push(
+      `${third.label} added supporting pressure with ${third.exceedanceRate}% exceedance occurrence during the analysis window.`
+    );
+  }
+
+  return segments.join(" ");
+}
+
+function buildHistoricalExecutiveSummary(
+  summary: any,
+  assessment: OverallAssessment
+) {
+  if (!summary?.topDrivers?.length) {
+    return "The 30-day historical analysis is still waiting for enough valid data points.";
+  }
+
+  const top = summary.topDrivers[0];
+  const next = summary.topDrivers[1];
+  const source = summary.primarySource?.source || "mixed-source pollution";
+
+  return `Over the last 30 days, the river condition is assessed as ${assessment.status.toLowerCase()} (${assessment.className === "N/A" ? "unclassified" : `Class ${assessment.className}`}), mainly driven by ${top.label}${
+    next ? ` and ${next.label}` : ""
+  }. ${top.label} recorded an average of ${formatMetric(
+    top.average,
+    top.unit
+  )}, latest value ${formatMetric(top.latest, top.unit)}, and exceedance rate ${
+    top.exceedanceRate
+  }%, indicating persistent monthly pressure rather than a one-time spike. The broader pattern suggests ${source.toLowerCase()}, so the result should be interpreted as a 30-day historical decision rather than a single-snapshot judgement.`;
+}
+
+function buildRecommendedActionFallback(summary: any) {
+  const top = summary?.topDrivers?.[0];
+  const source = summary?.primarySource?.source || "";
+
+  if (!top) return "Continue routine monitoring and verify field conditions.";
+
+  if (source.toLowerCase().includes("industrial")) {
+    return "Increase monitoring frequency and inspect possible industrial or chemical discharge points upstream.";
+  }
+
+  if (source.toLowerCase().includes("wastewater")) {
+    return "Increase monitoring frequency, inspect sewage/domestic discharge sources, and verify ammonia and BOD hotspots.";
+  }
+
+  if (source.toLowerCase().includes("sediment")) {
+    return "Check upstream runoff pathways, erosion-prone zones, and recent land disturbance contributing to turbidity.";
+  }
+
+  if (source.toLowerCase().includes("agricultural")) {
+    return "Inspect nearby agricultural or livestock runoff pathways and validate ammonia-related loading.";
+  }
+
+  if (top.key === "DO_Sensor") {
+    return "Prioritise oxygen-stress verification in the field and inspect for organic pollution buildup.";
+  }
+
+  return "Increase monitoring frequency and investigate the dominant parameter drivers identified during the last 30 days.";
+}
+
+function buildRecommendationListFallback(summary: any) {
+  const topDrivers: DriverSummary[] = summary?.topDrivers || [];
+
+  const base = [
+    "Increase monitoring frequency for the affected river section.",
+    "Validate dominant sensor anomalies with field inspection.",
+    "Review recent upstream discharge or runoff activity.",
+  ];
+
+  if (topDrivers.some((d) => d.key === "NH_Sensor")) {
+    base.push("Prioritise ammonia source tracing near settlements, farms, or livestock areas.");
+  }
+
+  if (topDrivers.some((d) => d.key === "COD_Sensor")) {
+    base.push("Check for chemical or industrial pollution signatures related to COD pressure.");
+  }
+
+  if (topDrivers.some((d) => d.key === "Tr_Sensor")) {
+    base.push("Assess sediment input, stormwater runoff, and land disturbance near the catchment.");
+  }
+
+  return base.slice(0, 5);
+}
+
+function buildPredictionDetail(summary: any, assessment: OverallAssessment) {
+  const top = summary?.topDrivers?.[0];
+  const second = summary?.topDrivers?.[1];
+
+  if (!top) {
+    return "There is not enough 30-day historical data to build a stronger prediction narrative.";
+  }
+
+  return `The AI prediction is based on the historical behaviour of the last 30 days, not only the latest reading. The current condition is interpreted as ${
+    assessment.className === "N/A" ? "an unclassified state" : `Class ${assessment.className}`
+  }, because ${top.label} remained the dominant pressure parameter with an average of ${formatMetric(
+    top.average,
+    top.unit
+  )}, latest value ${formatMetric(top.latest, top.unit)}, maximum ${formatMetric(
+    top.maximum,
+    top.unit
+  )}, and exceedance rate ${top.exceedanceRate}%. ${
+    second
+      ? `${second.label} also contributed with ${second.direction} movement and monthly exceedance rate ${second.exceedanceRate}%.`
+      : ""
+  } This means the prediction reflects sustained river stress across the month rather than a temporary fluctuation.`;
+}
+
+function buildInterpretationDetail(summary: any, assessment: OverallAssessment) {
+  const drivers: DriverSummary[] = summary?.topDrivers || [];
+  if (!drivers.length) {
+    return "Historical interpretation is unavailable because the 30-day dataset is insufficient.";
+  }
+
+  const driverLines = drivers.slice(0, 3).map(
+    (driver) =>
+      `${driver.label} avg ${formatMetric(driver.average, driver.unit)}, latest ${formatMetric(
+        driver.latest,
+        driver.unit
+      )}, max ${formatMetric(driver.maximum, driver.unit)}, exceedance ${driver.exceedanceRate}%`
+  );
+
+  return `The AI interprets this river segment as ${assessment.status.toLowerCase()} because the dominant parameters consistently stayed under pressure during the 30-day window. The main numeric contributors are ${driverLines.join(
+    "; "
+  )}. These values show that the deterioration pattern is recurrent over time, which is why the model treats the current condition as a historically supported decision rather than a generic output.`;
+}
+
+function buildSourceDetail(summary: any) {
+  const sources: SourceHypothesis[] = summary?.sourceHypotheses || [];
+  if (!sources.length) {
+    return "No specific source hypothesis could be formed from the available monthly pattern.";
+  }
+
+  return sources
+    .map(
+      (source, index) =>
+        `${index + 1}. ${source.source} (${source.confidence}% confidence): ${source.reason}`
+    )
+    .join(" ");
+}
+
+function buildConfidenceDetail(summary: any) {
+  return `The confidence score is ${summary?.confidenceScore ?? 70}% because the monthly interpretation is supported by repeated behaviour across ${summary?.recordCount ?? 0} valid records, recurring exceedance patterns, and consistent dominance of the same high-impact parameters. This confidence should still be verified with field inspection because source attribution remains a hypothesis, not direct proof.`;
+}
+
+function buildRecommendationDetail(summary: any) {
+  const recommendation = buildRecommendedActionFallback(summary);
+  const followUps = buildRecommendationListFallback(summary);
+
+  return `${recommendation} Supporting follow-up actions include: ${followUps.join(
+    " "
+  )}`;
+}
+
+function buildDriverNarrative(summary: any) {
+  const drivers: DriverSummary[] = summary?.topDrivers || [];
+  if (!drivers.length) {
+    return "No dominant driver pattern could be summarised.";
+  }
+
+  return drivers
+    .slice(0, 4)
+    .map(
+      (driver) =>
+        `${driver.label} influenced the 30-day assessment through ${driver.direction} behaviour, average ${formatMetric(
+          driver.average,
+          driver.unit
+        )}, latest ${formatMetric(driver.latest, driver.unit)}, and ${driver.exceedanceRate}% threshold exceedance. ${driver.likelyImpact}`
+    )
+    .join(" ");
+}
+
+function buildAnomalyNarrative(summary: any) {
+  const notes: string[] = summary?.anomalyNotes || [];
+  if (!notes.length) {
+    return "No major anomaly note was generated from the 30-day dataset.";
+  }
+  return notes.join(" ");
+}
+
+function buildMonthlyPatternNarrative(summary: any) {
+  const source = summary?.primarySource;
+  const pollutedDrivers = summary?.pollutedDrivers || [];
+
+  return `Across the monthly window, the pattern suggests repeated stress from ${pollutedDrivers.length ? pollutedDrivers.join(", ") : "multiple parameters"}. ${
+    source
+      ? `The strongest pollution hypothesis is ${source.source.toLowerCase()} because ${source.reason}`
+      : "No single pollution source dominates the full monthly pattern."
+  }`;
+}
+
+function buildModalOverallNarrative(
+  summary: any,
+  assessment: OverallAssessment
+) {
+  return `This expanded AI insight explains the water quality decision using the last 30 days of historical data. The current assessment is ${
+    assessment.className === "N/A" ? "not fully classifiable" : `Class ${assessment.className}`
+  }, and the explanation is grounded in repeated monthly behaviour of the dominant parameters, their numeric values, exceedance frequency, and the most plausible pollution-source hypothesis.`;
+}
+
 function HeroMetricCard({
   title,
   value,
@@ -1716,6 +2593,38 @@ function MiniDecisionRow({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-sm font-medium leading-6 text-gray-800">
         {value}
       </p>
+    </div>
+  );
+}
+
+function DriverImpactCard({ driver }: { driver: DriverSummary }) {
+  return (
+    <div className="rounded-xl border bg-white p-4">
+      <p className="text-xs uppercase tracking-wide text-gray-500">
+        {driver.label}
+      </p>
+      <div className="mt-2 space-y-1 text-sm text-gray-700">
+        <p>
+          <span className="font-semibold text-gray-900">Avg:</span>{" "}
+          {formatMetric(driver.average, driver.unit)}
+        </p>
+        <p>
+          <span className="font-semibold text-gray-900">Latest:</span>{" "}
+          {formatMetric(driver.latest, driver.unit)}
+        </p>
+        <p>
+          <span className="font-semibold text-gray-900">Max:</span>{" "}
+          {formatMetric(driver.maximum, driver.unit)}
+        </p>
+        <p>
+          <span className="font-semibold text-gray-900">Trend:</span>{" "}
+          {driver.direction}
+        </p>
+        <p>
+          <span className="font-semibold text-gray-900">Exceedance:</span>{" "}
+          {driver.exceedanceRate}%
+        </p>
+      </div>
     </div>
   );
 }
@@ -1784,6 +2693,7 @@ function DetailedInsightModal({
   confidencePercentage,
   fallbackSource,
   fallbackClass,
+  historicalSummary,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1796,6 +2706,7 @@ function DetailedInsightModal({
   confidencePercentage: number;
   fallbackSource: string;
   fallbackClass: string;
+  historicalSummary: any;
 }) {
   if (!isOpen) return null;
 
@@ -1813,7 +2724,8 @@ function DetailedInsightModal({
                 More AI Insight
               </h3>
               <p className="mt-1 text-sm text-gray-500">
-                Detailed AI interpretation for current river condition
+                Detailed AI interpretation using historical data from the last 30
+                days
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="inline-flex items-center rounded-full border bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
@@ -1824,6 +2736,9 @@ function DetailedInsightModal({
                 </span>
                 <span className="inline-flex items-center rounded-full border bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
                   Confidence: {confidencePercentage}%
+                </span>
+                <span className="inline-flex items-center rounded-full border bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
+                  Window: {historicalSummary?.windowLabel || "Last 30 days"}
                 </span>
               </div>
             </div>
@@ -1844,7 +2759,7 @@ function DetailedInsightModal({
                   Generating detailed AI insight...
                 </p>
                 <p className="mt-1 text-sm text-gray-500">
-                  OpenAI is expanding each AI decision component into a fuller
+                  OpenAI is expanding the 30-day historical decision into a fuller
                   explanation
                 </p>
               </div>
@@ -1864,13 +2779,13 @@ function DetailedInsightModal({
                   </p>
                   <p className="text-sm leading-7 text-gray-700">
                     {data?.overallNarrative ||
-                      "This expanded section explains the AI decision in more detail so the user can understand the meaning, context, and operational implication of the current water quality assessment."}
+                      "This expanded section explains the AI decision using the last 30 days of historical data so the user can understand the meaning, context, dominant parameter values, and operational implication of the current water quality assessment."}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <ExpandedDecisionCard
-                    title={data?.predictionTitle || "AI Prediction"}
+                    title={data?.predictionTitle || "30-Day AI Prediction"}
                     headline={decision?.currentWaterQualityStatus || fallbackClass}
                     description={
                       data?.predictionDetail ||
@@ -1879,7 +2794,9 @@ function DetailedInsightModal({
                   />
 
                   <ExpandedDecisionCard
-                    title={data?.interpretationTitle || "AI Interpretation"}
+                    title={
+                      data?.interpretationTitle || "Historical AI Interpretation"
+                    }
                     headline={decision?.pollutionRiskLevel || riskLevel}
                     description={
                       data?.interpretationDetail ||
@@ -1923,6 +2840,50 @@ function DetailedInsightModal({
                     />
                   </div>
                 </div>
+
+                <div className="rounded-2xl border bg-white p-5">
+                  <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">
+                    Driver Narrative
+                  </p>
+                  <p className="text-sm leading-7 text-gray-700">
+                    {data?.driverNarrative ||
+                      "This section explains which parameters most strongly influenced the 30-day decision."}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border bg-white p-5">
+                  <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">
+                    Monthly Pattern Narrative
+                  </p>
+                  <p className="text-sm leading-7 text-gray-700">
+                    {data?.monthlyPatternNarrative ||
+                      "This section explains how the parameter pattern evolved across the month."}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border bg-white p-5">
+                  <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">
+                    Anomaly Narrative
+                  </p>
+                  <p className="text-sm leading-7 text-gray-700">
+                    {data?.anomalyNarrative ||
+                      "This section explains the key anomalies observed across the 30-day historical window."}
+                  </p>
+                </div>
+
+                {historicalSummary?.topDrivers?.length > 0 && (
+                  <div className="rounded-2xl border bg-white p-5">
+                    <p className="mb-4 text-xs uppercase tracking-wide text-gray-500">
+                      Numeric Driver Breakdown
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {historicalSummary.topDrivers.slice(0, 6).map((driver: DriverSummary) => (
+                        <DriverImpactCard key={driver.key} driver={driver} />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
