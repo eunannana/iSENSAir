@@ -126,90 +126,102 @@ export default function MapSelector({ onSelect }: Props) {
   }, [locations]);
 
   return (
-    <div className="max-w-6xl mx-auto px-4 mt-12">
-      <div className="rounded-3xl overflow-hidden shadow-xl border border-gray-200 bg-white">
-        {/* Header */}
-        <div className="px-8 py-6 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
-          <h2 className="text-xl font-semibold text-gray-800">
-            🗺 Select Monitoring Area
+    <section className="w-full">
+      <div className="mx-auto max-w-6xl px-4 md:px-6">
+        <div className="mb-6 text-center">
+          <h2 className="text-2xl font-bold tracking-tight text-gray-800 md:text-3xl">
+            Select Monitoring Area
           </h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Click on a river location to open the monitoring dashboard.
+          <p className="mt-2 text-sm text-gray-500 md:text-base">
+            Click on a river location to open the monitoring dashboard and view
+            AI-based analysis.
           </p>
         </div>
 
-        {/* Map */}
-        <MapContainer
-          center={[4.2105, 101.9758]}
-          zoom={6}
-          minZoom={2}
-          maxZoom={18}
-          worldCopyJump={false}
-          maxBounds={[
-            [-90, -180],
-            [90, 180],
-          ]}
-          maxBoundsViscosity={1.0}
-          style={{ height: "520px", width: "100%" }}
-        >
-          <TileLayer
-            attribution="&copy; OpenStreetMap contributors"
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            noWrap={true}
-          />
+        <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-xl">
+          {/* Header */}
+          <div className="border-b bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-5 md:px-8">
+            <h3 className="text-lg font-semibold text-gray-800 md:text-xl">
+              🗺 Monitoring Map
+            </h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Select one of the available river monitoring locations below.
+            </p>
+          </div>
 
-          {locations.map((loc) => {
-            const summary = mapSummary[loc.name];
-            const riskLevel = summary?.riskLevel ?? "Unknown";
-            const overallClass = summary?.overallClass ?? "-";
+          {/* Map */}
+          <MapContainer
+            center={[4.2105, 101.9758]}
+            zoom={6}
+            minZoom={2}
+            maxZoom={18}
+            worldCopyJump={false}
+            maxBounds={[
+              [-90, -180],
+              [90, 180],
+            ]}
+            maxBoundsViscosity={1.0}
+            style={{ height: "520px", width: "100%" }}
+          >
+            <TileLayer
+              attribution="&copy; OpenStreetMap contributors"
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              noWrap={true}
+            />
 
-            return (
-              <Marker
-                key={loc.name}
-                position={[loc.lat, loc.lng]}
-                icon={createPinIcon(getMarkerColor(riskLevel))}
-                eventHandlers={{
-                  click: () => onSelect(loc.name),
-                }}
-              >
-                <Tooltip
-                  permanent
-                  direction="right"
-                  offset={[16, -8]}
-                  opacity={1}
+            {locations.map((loc) => {
+              const summary = mapSummary[loc.name];
+              const riskLevel = summary?.riskLevel ?? "Unknown";
+              const overallClass = summary?.overallClass ?? "-";
+
+              return (
+                <Marker
+                  key={loc.name}
+                  position={[loc.lat, loc.lng]}
+                  icon={createPinIcon(getMarkerColor(riskLevel))}
+                  eventHandlers={{
+                    click: () => onSelect(loc.name),
+                  }}
                 >
-                  <div className="bg-white px-3 py-2 rounded-lg shadow text-sm leading-snug border border-gray-200">
-                    <div className="font-medium text-gray-800">{loc.label}</div>
-                    <div className="text-xs text-gray-500">
-                      Class {overallClass} · {riskLevel}
+                  <Tooltip
+                    permanent
+                    direction="right"
+                    offset={[16, -8]}
+                    opacity={1}
+                  >
+                    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm leading-snug shadow">
+                      <div className="font-medium text-gray-800">{loc.label}</div>
+                      <div className="text-xs text-gray-500">
+                        Class {overallClass} · {riskLevel}
+                      </div>
                     </div>
-                  </div>
-                </Tooltip>
-              </Marker>
-            );
-          })}
-        </MapContainer>
+                  </Tooltip>
+                </Marker>
+              );
+            })}
+          </MapContainer>
 
-        {/* Legend */}
-        <div className="px-6 py-4 border-t bg-gray-50 flex flex-wrap gap-4 text-sm text-gray-600">
-          <span className="inline-flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" />
-            Low
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-amber-500 inline-block" />
-            Moderate
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-orange-500 inline-block" />
-            High
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
-            Critical
-          </span>
+          {/* Legend */}
+          <div className="flex flex-wrap gap-4 border-t bg-gray-50 px-6 py-4 text-sm text-gray-600">
+            <span className="inline-flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full bg-emerald-500" />
+              Low
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full bg-amber-500" />
+              Moderate
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full bg-orange-500" />
+              High
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full bg-red-500" />
+              Critical
+            </span>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

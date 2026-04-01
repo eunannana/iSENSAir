@@ -5,8 +5,8 @@ import Visualizations from "@/components/Visualizations";
 import LoadingScreen from "@/components/LoadingScreen";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { getNWQSResult } from "@/lib/nwqs";
 import { getAIInsightSummary } from "@/lib/aiInsights";
+import { getNWQSResult } from "@/lib/nwqs";
 import {
   fetchLatestData,
   fetchDataByDateRange,
@@ -41,6 +41,26 @@ type DetailedInsightResponse = {
   recommendationDetail?: string;
 };
 
+type OverallNWQSClass = "I" | "II" | "III" | "IV" | "V" | "N/A";
+
+type OverallAssessment = {
+  className: OverallNWQSClass;
+  status: string;
+  description: string;
+  colorClass: string;
+  badgeClass: string;
+  explanation: string;
+  dominantReason: string;
+  drivers: {
+    key: string;
+    label: string;
+    value: number | null;
+    className: OverallNWQSClass;
+    displayValue: string;
+  }[];
+  convertedNH3N: number | null;
+};
+
 const SENSOR_KEYS = [
   "Tr_Sensor",
   "BOD_Sensor",
@@ -53,6 +73,126 @@ const SENSOR_KEYS = [
   "pH_Sensor",
 ] as const;
 
+const SENSOR_META: Record<
+  string,
+  {
+    label: string;
+    shortLabel: string;
+    unit: string;
+    min: number;
+    max: number;
+  }
+> = {
+  Tr_Sensor: {
+    label: "Turbidity (TR)",
+    shortLabel: "TR",
+    unit: "mg/L",
+    min: 0,
+    max: 10000,
+  },
+  BOD_Sensor: {
+    label: "Biochemical Oxygen Demand (BOD)",
+    shortLabel: "BOD",
+    unit: "mg/L",
+    min: 0,
+    max: 1000,
+  },
+  DO_Sensor: {
+    label: "Dissolved Oxygen (DO)",
+    shortLabel: "DO",
+    unit: "mg/L",
+    min: 0,
+    max: 20,
+  },
+  COD_Sensor: {
+    label: "Chemical Oxygen Demand (COD)",
+    shortLabel: "COD",
+    unit: "mg/L",
+    min: 0,
+    max: 2000,
+  },
+  NH_Sensor: {
+    label: "Ammonia (NH3)",
+    shortLabel: "NH3",
+    unit: "mg/L",
+    min: 0,
+    max: 1000,
+  },
+  TDS_Sensor: {
+    label: "Total Dissolved Solids (TDS)",
+    shortLabel: "TDS",
+    unit: "mg/L",
+    min: 0,
+    max: 100000,
+  },
+  CT_Sensor: {
+    label: "Conductivity (CT)",
+    shortLabel: "CT",
+    unit: "µS/cm",
+    min: 0,
+    max: 200000,
+  },
+  ORP_Sensor: {
+    label: "Oxidation Reduction Potential (ORP)",
+    shortLabel: "ORP",
+    unit: "mV",
+    min: -2000,
+    max: 2000,
+  },
+  pH_Sensor: {
+    label: "Potential of Hydrogen (pH)",
+    shortLabel: "pH",
+    unit: "",
+    min: 0,
+    max: 14,
+  },
+};
+
+const CLASS_DISPLAY: Record<
+  Exclude<OverallNWQSClass, "N/A">,
+  {
+    status: string;
+    description: string;
+    colorClass: string;
+    badgeClass: string;
+  }
+> = {
+  I: {
+    status: "Clean",
+    description:
+      "Conservation of natural environment, practically no treatment required, and suitable for very sensitive aquatic species.",
+    colorClass: "text-emerald-700",
+    badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  },
+  II: {
+    status: "Good",
+    description:
+      "Suitable for conventional water treatment, sensitive aquatic species, and recreational use depending on subclass.",
+    colorClass: "text-green-700",
+    badgeClass: "border-green-200 bg-green-50 text-green-700",
+  },
+  III: {
+    status: "Moderate",
+    description:
+      "Water supply requires extensive treatment; suitable only for tolerant aquatic species and livestock drinking.",
+    colorClass: "text-amber-700",
+    badgeClass: "border-amber-200 bg-amber-50 text-amber-700",
+  },
+  IV: {
+    status: "Polluted",
+    description: "Generally suitable only for irrigation use.",
+    colorClass: "text-orange-700",
+    badgeClass: "border-orange-200 bg-orange-50 text-orange-700",
+  },
+  V: {
+    status: "Critical",
+    description:
+      "Does not fall under the beneficial uses of Classes I to IV.",
+    colorClass: "text-red-700",
+    badgeClass: "border-red-200 bg-red-50 text-red-700",
+  },
+};
+
 export default function WeconTable({ initialArea }: Props) {
   const area = initialArea;
 
@@ -60,25 +200,31 @@ export default function WeconTable({ initialArea }: Props) {
   const [latestData, setLatestData] = useState<any[]>([]);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [loadingStage, setLoadingStage] = useState<
     "connecting" | "booting" | "loading"
   >("connecting");
   const [retryAttempt, setRetryAttempt] = useState(0);
+
   const [loadingHistorical, setLoadingHistorical] = useState(false);
   const [sortAsc, setSortAsc] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   const [refreshingLatest, setRefreshingLatest] = useState(false);
   const [snapshotRotationIndex, setSnapshotRotationIndex] = useState(0);
-  const [currentDisplayTime, setCurrentDisplayTime] = useState(() =>
-    new Date().toISOString()
+  const [currentDisplayTime, setCurrentDisplayTime] = useState(
+    () => new Date().toISOString()
   );
   const [snapshotAnimating, setSnapshotAnimating] = useState(false);
 
   const [aiDecision, setAIDecision] = useState<AIDecisionResponse | null>(null);
   const [loadingAIDecision, setLoadingAIDecision] = useState(false);
   const [aiDecisionError, setAIDecisionError] = useState<string | null>(null);
+
+  const [aiQuickInsight, setAIQuickInsight] = useState("");
+  const [loadingQuickInsight, setLoadingQuickInsight] = useState(false);
 
   const [showVisualization, setShowVisualization] = useState(false);
   const [showHistoricalTable, setShowHistoricalTable] = useState(false);
@@ -95,7 +241,7 @@ export default function WeconTable({ initialArea }: Props) {
 
   function hasValidSensorData(record: any): boolean {
     return SENSOR_KEYS.some((key) => {
-      const val = record[key];
+      const val = record?.[key];
       return (
         val !== null &&
         val !== undefined &&
@@ -115,20 +261,23 @@ export default function WeconTable({ initialArea }: Props) {
   function formatDisplayDate(dateStr: string) {
     if (!dateStr) return "-";
     const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return "-";
+
     const day = String(date.getDate()).padStart(2, "0");
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const year = date.getFullYear();
+
     return `${day}/${month}/${year}`;
   }
 
   function formatDisplayDateTime(ts: string) {
     if (!ts) return "-";
-
     const date = new Date(ts);
+    if (isNaN(date.getTime())) return ts;
+
     const day = String(date.getDate()).padStart(2, "0");
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const year = date.getFullYear();
-
     const hour = String(date.getHours()).padStart(2, "0");
     const minute = String(date.getMinutes()).padStart(2, "0");
     const second = String(date.getSeconds()).padStart(2, "0");
@@ -140,7 +289,8 @@ export default function WeconTable({ initialArea }: Props) {
     if (!ts) return 0;
 
     if (ts.includes("T")) {
-      return new Date(ts).getTime();
+      const t = new Date(ts).getTime();
+      return Number.isNaN(t) ? 0 : t;
     }
 
     const [datePart, timePart] = ts.includes(",")
@@ -152,7 +302,7 @@ export default function WeconTable({ initialArea }: Props) {
     const [day, month, year] = datePart.split("/");
     const timeArray = timePart ? timePart.split(":").map(Number) : [0, 0, 0];
 
-    return new Date(
+    const parsed = new Date(
       Number(year),
       Number(month) - 1,
       Number(day),
@@ -160,6 +310,8 @@ export default function WeconTable({ initialArea }: Props) {
       timeArray[1] || 0,
       timeArray[2] || 0
     ).getTime();
+
+    return Number.isNaN(parsed) ? 0 : parsed;
   }
 
   function getRiskBadgeClass(riskLevel: string) {
@@ -255,6 +407,56 @@ export default function WeconTable({ initialArea }: Props) {
       console.error("Error refreshing latest:", error);
     } finally {
       setRefreshingLatest(false);
+    }
+  }
+
+  async function generateQuickAIInsight(
+    latestRowParam: any,
+    sortedDataParam: any[],
+    aiInsightParam: any,
+    assessmentParam: OverallAssessment
+  ) {
+    if (!latestRowParam) return;
+
+    setLoadingQuickInsight(true);
+
+    try {
+      const res = await fetch("/api/openai", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "openai",
+          mode: "quick_insight",
+          latestRow: latestRowParam,
+          rows: sortedDataParam.slice(0, 60),
+          aiInsight: aiInsightParam,
+          nwqsSummary: {
+            overallClass: assessmentParam.className,
+            overallStatus: assessmentParam.status,
+            dominantReason: assessmentParam.dominantReason,
+            drivers: assessmentParam.drivers,
+            lastUpdated: latestRowParam?.Timestamp,
+          },
+        }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result?.error || "Failed to generate quick insight.");
+      }
+
+      setAIQuickInsight(
+        result?.insight ||
+          buildQuickInsightFallback(aiInsightParam, assessmentParam)
+      );
+    } catch (error) {
+      console.error("Failed to generate quick AI insight:", error);
+      setAIQuickInsight(buildQuickInsightFallback(aiInsightParam, assessmentParam));
+    } finally {
+      setLoadingQuickInsight(false);
     }
   }
 
@@ -381,17 +583,20 @@ export default function WeconTable({ initialArea }: Props) {
       setDetailedInsight({
         overallNarrative:
           result?.overallNarrative ||
-          `This expanded AI insight provides a more detailed explanation of the current river condition by elaborating the prediction, interpretation, possible pollution source, confidence level, and operational recommendation.`,
+          "This expanded AI insight provides a more detailed explanation of the current river condition by elaborating the prediction, interpretation, possible pollution source, confidence level, and operational recommendation.",
         predictionTitle: result?.predictionTitle || "AI Prediction",
         predictionDetail: result?.predictionDetail || fallbackPrediction,
-        interpretationTitle: result?.interpretationTitle || "AI Interpretation",
+        interpretationTitle:
+          result?.interpretationTitle || "AI Interpretation",
         interpretationDetail:
           result?.interpretationDetail || fallbackInterpretation,
-        sourceTitle: result?.sourceTitle || "Predicted Source of Pollution",
+        sourceTitle:
+          result?.sourceTitle || "Predicted Source of Pollution",
         sourceDetail: result?.sourceDetail || fallbackSource,
         confidenceTitle: result?.confidenceTitle || "AI Confidence",
         confidenceDetail: result?.confidenceDetail || fallbackConfidence,
-        recommendationTitle: result?.recommendationTitle || "AI Recommendation",
+        recommendationTitle:
+          result?.recommendationTitle || "AI Recommendation",
         recommendationDetail:
           result?.recommendationDetail || fallbackRecommendation,
       });
@@ -407,7 +612,6 @@ export default function WeconTable({ initialArea }: Props) {
 
   useEffect(() => {
     const today = new Date().toISOString().split("T")[0];
-
     setStart(today);
     setEnd(today);
     setCurrentPage(1);
@@ -417,6 +621,7 @@ export default function WeconTable({ initialArea }: Props) {
     setDetailedInsight(null);
     setDetailedInsightError(null);
     setShowInsightModal(false);
+    setAIQuickInsight("");
 
     const handleRetry = (
       attempt: number,
@@ -433,11 +638,9 @@ export default function WeconTable({ initialArea }: Props) {
 
     async function loadInitial() {
       setLoadingInitial(true);
-
       try {
         setLoadingStage("connecting");
         await validateLocation(area);
-
         setLoadingStage("loading");
         await Promise.all([fetchHistorical(today, today), fetchLatestSnapshot()]);
       } catch {
@@ -509,7 +712,6 @@ export default function WeconTable({ initialArea }: Props) {
     merged.forEach((row) => {
       if (!row || !row.Timestamp) return;
       if (!hasValidSensorData(row)) return;
-
       if (!uniqueByTimestamp.has(row.Timestamp)) {
         uniqueByTimestamp.set(row.Timestamp, row);
       }
@@ -533,7 +735,9 @@ export default function WeconTable({ initialArea }: Props) {
     }
 
     const rotateInterval = setInterval(() => {
-      setSnapshotRotationIndex((prev) => (prev + 1) % latestSnapshotRows.length);
+      setSnapshotRotationIndex(
+        (prev) => (prev + 1) % latestSnapshotRows.length
+      );
     }, 30000);
 
     return () => clearInterval(rotateInterval);
@@ -582,82 +786,15 @@ export default function WeconTable({ initialArea }: Props) {
       .slice(0, 5);
   }, [aiInsight.trendSummary]);
 
-  const anomalyHighlights = useMemo(() => {
-  return (aiInsight.anomalies || []).slice(0, 3);
-}, [aiInsight.anomalies]);
+  const latestAssessment = useMemo(() => {
+    return assessOverallWaterQuality(displayedSnapshotRow);
+  }, [displayedSnapshotRow]);
 
-const activeRiskLevel =
-  aiDecision?.pollutionRiskLevel || aiInsight.riskLevel || "Moderate";
+  const activeRiskLevel =
+    aiDecision?.pollutionRiskLevel || aiInsight.riskLevel || "Moderate";
 
-const riskDrivers = useMemo(() => {
-  const items: string[] = [];
+  const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
-  if (aiInsight?.dominantParameters?.length) {
-    items.push(
-      `${aiInsight.dominantParameters.join(
-        ", "
-      )} are the strongest contributors to the current classification.`
-    );
-  }
-
-  if (exceedanceIndicators.length > 0) {
-    items.push(
-      `${exceedanceIndicators
-        .slice(0, 3)
-        .map((item: any) => `${item.label} reaches Class ${item.className}`)
-        .join(", ")}.`
-    );
-  }
-
-  if (anomalyHighlights.length > 0) {
-    items.push(
-      `${anomalyHighlights
-        .map((item: any) => `${item.label}: ${item.message}`)
-        .join(" ")}`
-    );
-  }
-
-  if (items.length === 0) {
-    items.push(
-      "The decision is based on combined threshold evaluation, recent trend movement, and overall parameter behaviour."
-    );
-  }
-
-  return items.join(" ");
-}, [aiInsight, exceedanceIndicators, anomalyHighlights]);
-
-const evidenceNarrative = useMemo(() => {
-  if (keyTrendItems.length > 0) {
-    return keyTrendItems
-      .map(
-        (item: any) =>
-          `${item.label} is ${item.direction} (${item.changePct}%)`
-      )
-      .join(". ");
-  }
-
-  if (anomalyHighlights.length > 0) {
-    return anomalyHighlights
-      .map((item: any) => `${item.label}: ${item.message}`)
-      .join(". ");
-  }
-
-  return "No strong short-term movement was detected, so the current interpretation relies primarily on present threshold condition and dominant parameter levels.";
-}, [keyTrendItems, anomalyHighlights]);
-
-const impactNarrative = useMemo(() => {
-  if (activeRiskLevel === "Critical" || activeRiskLevel === "High") {
-    return `Current conditions suggest a high likelihood of ecological stress. Elevated ${likelyContributor} may reduce water suitability, disturb aquatic balance, and indicate pollutant pressure requiring operational follow-up.`;
-  }
-
-  if (activeRiskLevel === "Moderate") {
-    return `The river condition shows moderate concern. Continued monitoring is important because changes in ${likelyContributor} may escalate if the present pattern persists.`;
-  }
-
-  return `Current signals suggest relatively controlled conditions, but continued observation remains necessary to ensure parameter stability over time.`;
-}, [likelyContributor, activeRiskLevel]);
-
-const totalPages = Math.ceil(sortedData.length / rowsPerPage);
   const paginatedData = sortedData.slice(
     (currentPage - 1) * rowsPerPage,
     currentPage * rowsPerPage
@@ -665,11 +802,14 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
   const schema = useMemo(() => {
     if (!sortedData.length) return {};
+
     const first = sortedData[0];
     const obj: Record<string, string> = {};
+
     Object.keys(first).forEach((key) => {
       obj[key] = key.toLowerCase().includes("time") ? "datetime" : "number";
     });
+
     return obj;
   }, [sortedData]);
 
@@ -678,6 +818,17 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
       generateAIDecisionPanel(latestRow, sortedData, aiInsight);
     }
   }, [latestRow, sortedData, aiInsight]);
+
+  useEffect(() => {
+    if (displayedSnapshotRow) {
+      generateQuickAIInsight(
+        displayedSnapshotRow,
+        sortedData,
+        aiInsight,
+        latestAssessment
+      );
+    }
+  }, [displayedSnapshotRow, sortedData, aiInsight, latestAssessment]);
 
   const handleExportPDF = () => {
     const pdf = new jsPDF("p", "mm", "a4");
@@ -705,19 +856,42 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
       autoTable(pdf, {
         startY: currentY,
         head: [["Parameter", "Value"]],
-        body: SENSOR_KEYS.map((k) => [k, roundValue(latestRow[k])]),
+        body: SENSOR_KEYS.map((k) => [
+          SENSOR_META[k].label,
+          `${roundValue(latestRow[k])}${
+            SENSOR_META[k].unit ? ` ${SENSOR_META[k].unit}` : ""
+          }`,
+        ]),
+        styles: { fontSize: 9 },
+        theme: "grid",
+      });
+
+      currentY =
+        (pdf as any).lastAutoTable?.finalY !== undefined
+          ? (pdf as any).lastAutoTable.finalY + 8
+          : currentY + 50;
+
+      autoTable(pdf, {
+        startY: currentY,
+        head: [["Overall Class", "Status", "Description", "Dominant Reason"]],
+        body: [
+          [
+            latestAssessment.className,
+            latestAssessment.status,
+            latestAssessment.description,
+            latestAssessment.dominantReason,
+          ],
+        ],
         styles: { fontSize: 9 },
         theme: "grid",
       });
     }
 
     const canvas = document.querySelector("canvas");
-
     if (canvas) {
       pdf.addPage();
       pdf.setFontSize(12);
       pdf.text("Trend Visualization", 14, 15);
-
       const chartImage = canvas.toDataURL("image/png");
       pdf.addImage(chartImage, "PNG", 10, 20, 190, 100);
     }
@@ -734,7 +908,7 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
       autoTable(pdf, {
         startY: 20,
-        head: [["Timestamp", ...SENSOR_KEYS]],
+        head: [["Timestamp", ...SENSOR_KEYS.map((k) => SENSOR_META[k].shortLabel)]],
         body: tableBody,
         styles: { fontSize: 6 },
         theme: "grid",
@@ -817,6 +991,7 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
       </div>
     );
   }
+
   const heroStyles = getHeroStyles(activeRiskLevel);
 
   return (
@@ -843,6 +1018,86 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
           {latestRow && (
             <div className="mx-auto max-w-6xl px-4">
+              <div className="rounded-2xl border bg-white p-6 shadow-sm">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold text-gray-800">
+                      Latest Snapshot
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Real-time parameter overview for the selected monitoring area
+                    </p>
+                  </div>
+
+                  <span
+                    className={`whitespace-nowrap text-sm text-gray-500 transition-colors duration-500 ${
+                      snapshotAnimating ? "text-blue-600" : ""
+                    }`}
+                  >
+                    {formatDisplayDateTime(currentDisplayTime)}
+                    {refreshingLatest ? " · Refreshing..." : ""}
+                  </span>
+                </div>
+
+                <div
+                  className={`grid grid-cols-1 gap-4 transition-all duration-700 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 ${
+                    snapshotAnimating
+                      ? "scale-[0.995] opacity-70"
+                      : "scale-100 opacity-100"
+                  }`}
+                >
+                  {SENSOR_KEYS.map((key) => (
+                    <DataCard
+                      key={key}
+                      sensorKey={key}
+                      value={displayedSnapshotRow?.[key]}
+                      roundValue={roundValue}
+                    />
+                  ))}
+                </div>
+
+                <div className="mt-5 rounded-2xl border bg-white p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
+                    Overall Water Quality Summary
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <h3
+                      className={`text-4xl font-bold tracking-tight ${latestAssessment.colorClass}`}
+                    >
+                      Class {latestAssessment.className}
+                    </h3>
+
+                    <span
+                      className={`inline-flex items-center rounded-full border px-4 py-1.5 text-sm font-semibold ${latestAssessment.badgeClass}`}
+                    >
+                      {latestAssessment.status}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 border-t pt-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      AI Insight
+                    </p>
+
+                    {loadingQuickInsight ? (
+                      <p className="mt-2 text-sm leading-6 text-gray-400">
+                        Generating brief AI insight...
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-sm leading-7 text-gray-700">
+                        {aiQuickInsight ||
+                          buildQuickInsightFallback(aiInsight, latestAssessment)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {latestRow && (
+            <div className="mx-auto max-w-6xl px-4">
               <div
                 className={`overflow-hidden rounded-3xl border p-0 shadow-sm ring-4 ${heroStyles.shell} ${heroStyles.ring}`}
               >
@@ -863,8 +1118,7 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
                         </h2>
 
                         <p className="mt-2 max-w-3xl text-sm leading-7 text-gray-600 md:text-base">
-                          {aiDecision?.executiveSummary ||
-                            buildInsightText(aiInsight)}
+                          {aiDecision?.executiveSummary || buildInsightText(aiInsight)}
                         </p>
                       </div>
 
@@ -876,6 +1130,7 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
                         >
                           {activeRiskLevel} Risk
                         </span>
+
                         <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700">
                           Confidence {confidencePercentage}%
                         </span>
@@ -920,9 +1175,7 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
                       </div>
 
                       {loadingAIDecision ? (
-                        <span className="text-xs text-gray-500">
-                          Generating...
-                        </span>
+                        <span className="text-xs text-gray-500">Generating...</span>
                       ) : null}
                     </div>
 
@@ -970,148 +1223,6 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
             </div>
           )}
 
-          {latestRow && (
-            <div id="latest-ai-assessment" className="mx-auto max-w-6xl px-4">
-              <div className="rounded-2xl border bg-white p-6 shadow-sm">
-                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="flex items-center gap-2 font-semibold text-gray-800">
-                      <span>⚡</span>
-                      <span>AI Key Indicators</span>
-                    </h2>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Supporting signals derived from AI analysis without repeating the main decision
-                    </p>
-                  </div>
-
-                  <span
-                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium ${getRiskBadgeClass(
-                      activeRiskLevel
-                    )}`}
-                  >
-                    {activeRiskLevel} Alert
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <FancySummaryCard
-                    title="Trend Direction"
-                    value={
-                      keyTrendItems.length > 0
-                        ? capitalizeText(keyTrendItems[0].direction)
-                        : "Stable"
-                    }
-                    subtitle="Recent dominant movement"
-                    accent="indigo"
-                  />
-                  <FancySummaryCard
-                    title="Anomaly Detection"
-                    value={
-                      aiInsight.anomalies?.length > 0 ? "Detected" : "No anomaly"
-                    }
-                    subtitle="Based on recent sensor behaviour"
-                    accent="amber"
-                  />
-                  <FancySummaryCard
-                    title="Dominant Parameter"
-                    value={likelyContributor}
-                    subtitle="Strongest impact factor"
-                    accent="red"
-                  />
-                  <FancySummaryCard
-                    title="Risk Score"
-                    value={`${aiInsight.riskScore}/100`}
-                    subtitle="Computed severity index"
-                    accent="emerald"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {latestRow && (
-            <div className="mx-auto max-w-6xl px-4">
-              <div className="rounded-2xl border bg-white p-6 shadow-sm">
-                <div className="mb-5">
-                  <h2 className="flex items-center gap-2 font-semibold text-gray-800">
-                    <span>🧠</span>
-                    <span>Why & Evidence Analysis</span>
-                  </h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Explanation of why the AI reached this decision based on threshold, trend, and environmental interpretation
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                  <InsightPanelCard
-                    title="Why This Classification"
-                    content={riskDrivers}
-                  />
-                  <InsightPanelCard
-                    title="Supporting Evidence"
-                    content={evidenceNarrative}
-                  />
-                  <InsightPanelCard
-                    title="Environmental Impact Insight"
-                    content={impactNarrative}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {latestRow && (
-            <div className="mx-auto max-w-6xl px-4">
-              <div className="rounded-2xl border bg-white p-6 shadow-sm">
-                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="font-semibold text-gray-800">
-                      Latest Snapshot
-                    </h2>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Real-time parameter overview for the selected monitoring
-                      area
-                    </p>
-                  </div>
-
-                  <span
-                    className={`whitespace-nowrap text-sm text-gray-500 transition-colors duration-500 ${
-                      snapshotAnimating ? "text-blue-600" : ""
-                    }`}
-                  >
-                    {formatDisplayDateTime(currentDisplayTime)}
-                    {refreshingLatest ? " · Refreshing..." : ""}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
-                  <div>
-                    <div
-                      className={`grid grid-cols-1 gap-4 transition-all duration-700 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 ${
-                        snapshotAnimating
-                          ? "scale-[0.995] opacity-70"
-                          : "scale-100 opacity-100"
-                      }`}
-                    >
-                      {SENSOR_KEYS.map((key) => (
-                        <DataCard
-                          key={key}
-                          sensorKey={key}
-                          value={displayedSnapshotRow?.[key]}
-                          roundValue={roundValue}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="xl:sticky xl:top-24 xl:self-start">
-                    <WaterClassCompactReference />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           <div className="mx-auto max-w-6xl px-4">
             <div className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
@@ -1121,7 +1232,8 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
                     <span>Supporting Data Visualization</span>
                   </h2>
                   <p className="mt-1 text-sm text-gray-500">
-                    AI decides first, graphs and indicators support the interpretation
+                    AI decides first, graphs and indicators support the
+                    interpretation
                   </p>
                 </div>
 
@@ -1231,9 +1343,7 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
             <div className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h2 className="font-semibold text-gray-800">
-                    Historical Data
-                  </h2>
+                  <h2 className="font-semibold text-gray-800">Historical Data</h2>
                   <p className="mt-1 text-sm text-gray-500">
                     Reference table for detailed review when needed
                   </p>
@@ -1253,7 +1363,6 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
                     <p className="mt-1 text-sm text-gray-500">
                       {formatDisplayDate(start)} - {formatDisplayDate(end)}
                     </p>
-
                     <p className="mt-1 text-xs text-gray-400">
                       Total Records: {sortedData.length}
                     </p>
@@ -1269,9 +1378,10 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
                           >
                             Timestamp {sortAsc ? "↑" : "↓"}
                           </th>
+
                           {SENSOR_KEYS.map((key) => (
                             <th key={key} className="px-3 py-2 text-left">
-                              {key}
+                              {SENSOR_META[key].shortLabel}
                             </th>
                           ))}
                         </tr>
@@ -1286,6 +1396,7 @@ const totalPages = Math.ceil(sortedData.length / rowsPerPage);
                             <td className="px-3 py-2">
                               {formatDisplayDateTime(row.Timestamp)}
                             </td>
+
                             {SENSOR_KEYS.map((key) => (
                               <td key={key} className="px-3 py-2">
                                 {roundValue(row[key])}
@@ -1372,9 +1483,208 @@ function buildInsightText(aiInsight: any) {
   return `${contributor} show the strongest influence on current water quality deterioration. The overall pattern indicates elevated pollution pressure with ${aiInsight.riskLevel.toLowerCase()} to critical monitoring concern depending on recent parameter movement.`;
 }
 
-function capitalizeText(value: string) {
-  if (!value) return value;
-  return value.charAt(0).toUpperCase() + value.slice(1);
+function buildQuickInsightFallback(
+  aiInsight: any,
+  assessment: OverallAssessment
+) {
+  const drivers =
+    aiInsight?.dominantParameters?.length > 0
+      ? aiInsight.dominantParameters.join(", ")
+      : "multiple core parameters";
+
+  const recommendation =
+    aiInsight?.recommendations?.[0] || "Closer monitoring is recommended.";
+
+  return `The latest snapshot indicates a ${assessment.status.toLowerCase()} water quality condition at Class ${
+    assessment.className
+  }, mainly influenced by ${drivers}. This suggests that the river is currently under elevated pollution stress and should be reviewed together with recent trend movement. ${recommendation}`;
+}
+
+function isValueOutOfPhysicalRange(sensorKey: string, value: any) {
+  if (value === null || value === undefined || value === "") return false;
+
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) return false;
+
+  const meta = SENSOR_META[sensorKey];
+  if (!meta) return false;
+
+  return numericValue < meta.min || numericValue > meta.max;
+}
+
+function toNullableNumber(value: any): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function getClassFromBOD(value: number | null): OverallNWQSClass {
+  if (value === null) return "N/A";
+  if (value < 1) return "I";
+  if (value <= 3) return "II";
+  if (value <= 6) return "III";
+  if (value <= 12) return "IV";
+  return "V";
+}
+
+function getClassFromCOD(value: number | null): OverallNWQSClass {
+  if (value === null) return "N/A";
+  if (value < 10) return "I";
+  if (value <= 25) return "II";
+  if (value <= 50) return "III";
+  if (value <= 100) return "IV";
+  return "V";
+}
+
+function getClassFromDO(value: number | null): OverallNWQSClass {
+  if (value === null) return "N/A";
+  if (value > 7) return "I";
+  if (value >= 5) return "II";
+  if (value >= 3) return "III";
+  if (value >= 1) return "IV";
+  return "V";
+}
+
+function getClassFromPH(value: number | null): OverallNWQSClass {
+  if (value === null) return "N/A";
+  if (value >= 6.5 && value <= 8.5) return "I";
+  if (value >= 6 && value < 6.5) return "II";
+  if (value > 8.5 && value <= 9) return "II";
+  if (value >= 5 && value < 6) return "III";
+  if (value >= 5 && value <= 9) return "IV";
+  return "V";
+}
+
+function convertNH3ToNH3N(nh3: number | null): number | null {
+  if (nh3 === null) return null;
+  return nh3 * 0.822;
+}
+
+function getClassFromNH3N(value: number | null): OverallNWQSClass {
+  if (value === null) return "N/A";
+  if (value < 0.1) return "I";
+  if (value <= 0.3) return "II";
+  if (value <= 0.9) return "III";
+  if (value <= 2.7) return "IV";
+  return "V";
+}
+
+function classSeverity(className: OverallNWQSClass): number {
+  switch (className) {
+    case "I":
+      return 1;
+    case "II":
+      return 2;
+    case "III":
+      return 3;
+    case "IV":
+      return 4;
+    case "V":
+      return 5;
+    default:
+      return 0;
+  }
+}
+
+function assessOverallWaterQuality(row: any): OverallAssessment {
+  if (!row) {
+    return {
+      className: "N/A",
+      status: "Unavailable",
+      description: "No latest sensor data available for classification.",
+      colorClass: "text-gray-600",
+      badgeClass: "border-gray-200 bg-gray-50 text-gray-600",
+      explanation: "Waiting for valid latest snapshot data.",
+      dominantReason: "No data",
+      drivers: [],
+      convertedNH3N: null,
+    };
+  }
+
+  const bod = toNullableNumber(row.BOD_Sensor);
+  const cod = toNullableNumber(row.COD_Sensor);
+  const doValue = toNullableNumber(row.DO_Sensor);
+  const ph = toNullableNumber(row.pH_Sensor);
+  const nh3 = toNullableNumber(row.NH_Sensor);
+  const nh3n = convertNH3ToNH3N(nh3);
+
+  const drivers = [
+    {
+      key: "BOD_Sensor",
+      label: "BOD",
+      value: bod,
+      className: getClassFromBOD(bod),
+      displayValue: bod !== null ? `${bod.toFixed(2)} mg/L` : "-",
+    },
+    {
+      key: "COD_Sensor",
+      label: "COD",
+      value: cod,
+      className: getClassFromCOD(cod),
+      displayValue: cod !== null ? `${cod.toFixed(2)} mg/L` : "-",
+    },
+    {
+      key: "DO_Sensor",
+      label: "DO",
+      value: doValue,
+      className: getClassFromDO(doValue),
+      displayValue: doValue !== null ? `${doValue.toFixed(2)} mg/L` : "-",
+    },
+    {
+      key: "pH_Sensor",
+      label: "pH",
+      value: ph,
+      className: getClassFromPH(ph),
+      displayValue: ph !== null ? ph.toFixed(2) : "-",
+    },
+    {
+      key: "NH_Sensor",
+      label: "NH3 → NH3-N",
+      value: nh3n,
+      className: getClassFromNH3N(nh3n),
+      displayValue: nh3n !== null ? `${nh3n.toFixed(2)} mg/L` : "-",
+    },
+  ];
+
+  const validDrivers = drivers.filter((driver) => driver.className !== "N/A");
+
+  if (validDrivers.length === 0) {
+    return {
+      className: "N/A",
+      status: "Unavailable",
+      description: "Core NWQS parameters are not available for classification.",
+      colorClass: "text-gray-600",
+      badgeClass: "border-gray-200 bg-gray-50 text-gray-600",
+      explanation: "Please provide valid BOD, COD, DO, pH, and NH3 readings.",
+      dominantReason: "Core parameters unavailable",
+      drivers,
+      convertedNH3N: nh3n,
+    };
+  }
+
+  const worstDriver = validDrivers.reduce((worst, current) => {
+    return classSeverity(current.className) > classSeverity(worst.className)
+      ? current
+      : worst;
+  });
+
+  const finalClass = worstDriver.className as Exclude<
+    OverallNWQSClass,
+    "N/A"
+  >;
+  const display = CLASS_DISPLAY[finalClass];
+
+  return {
+    className: finalClass,
+    status: display.status,
+    description: display.description,
+    colorClass: display.colorClass,
+    badgeClass: display.badgeClass,
+    explanation: `The overall class follows the worst core parameter class. In this snapshot, ${worstDriver.label} is the limiting parameter and drives the final class.`,
+    dominantReason: `${worstDriver.label} is at Class ${worstDriver.className} (${worstDriver.displayValue})`,
+    drivers,
+    convertedNH3N: nh3n,
+  };
 }
 
 function HeroMetricCard({
@@ -1397,13 +1707,7 @@ function HeroMetricCard({
   );
 }
 
-function MiniDecisionRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function MiniDecisionRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border bg-white p-3">
       <p className="text-[11px] uppercase tracking-wide text-gray-500">
@@ -1425,103 +1729,33 @@ function DataCard({
   value: any;
   roundValue: (val: any) => string;
 }) {
-  const nwqs = getNWQSResult(sensorKey as any, value);
+  const meta = SENSOR_META[sensorKey];
+  const outOfRange = isValueOutOfPhysicalRange(sensorKey, value);
 
   return (
-    <div className="space-y-3 rounded-xl border bg-gray-50 p-4">
-      <div>
-        <p className="text-xs text-gray-500">{nwqs.label}</p>
-        <p className="text-xl font-semibold text-gray-900">
-          {roundValue(value)}
-          {nwqs.unit ? (
-            <span className="ml-1 text-sm font-normal text-gray-500">
-              {nwqs.unit}
-            </span>
-          ) : null}
-        </p>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span
-          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${nwqs.colorClass}`}
+    <div className="rounded-xl border bg-gray-50 p-5">
+      <p className="text-sm font-medium leading-6 text-gray-500">
+        {meta.label}
+      </p>
+      <div className="mt-3 flex items-end gap-2">
+        <p
+          className={`text-3xl font-bold tracking-tight ${
+            outOfRange ? "text-red-600" : "text-gray-900"
+          }`}
         >
-          Class {nwqs.className}
-        </span>
-
-        <span className="text-xs text-gray-600">{nwqs.status}</span>
-      </div>
-
-      <p className="text-[11px] leading-relaxed text-gray-500">
-        {nwqs.description}
-      </p>
-    </div>
-  );
-}
-
-function FancySummaryCard({
-  title,
-  value,
-  subtitle,
-  accent = "indigo",
-}: {
-  title: string;
-  value: string;
-  subtitle?: string;
-  accent?: "emerald" | "red" | "amber" | "indigo";
-}) {
-  const accentMap: Record<string, string> = {
-    emerald: "from-emerald-500 to-teal-500",
-    red: "from-red-500 to-orange-500",
-    amber: "from-amber-500 to-yellow-500",
-    indigo: "from-indigo-500 to-purple-500",
-  };
-
-  return (
-    <div className="rounded-2xl border bg-gray-50 p-4 transition hover:shadow-sm">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div
-          className={`h-2.5 w-10 rounded-full bg-gradient-to-r ${accentMap[accent]}`}
-        />
-      </div>
-
-      <p className="mb-1 text-xs text-gray-500">{title}</p>
-      <p className="break-words text-base font-semibold leading-snug text-gray-900">
-        {value}
-      </p>
-
-      {subtitle ? (
-        <p className="mt-2 text-xs leading-relaxed text-gray-500">
-          {subtitle}
+          {roundValue(value)}
         </p>
-      ) : null}
+        {meta.unit ? (
+          <span className="pb-1 text-sm font-medium text-gray-500">
+            {meta.unit}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-function InsightPanelCard({
-  title,
-  content,
-}: {
-  title: string;
-  content: string;
-}) {
-  return (
-    <div className="rounded-xl border bg-gradient-to-b from-gray-50 to-white p-4 transition hover:shadow-sm">
-      <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">
-        {title}
-      </p>
-      <p className="text-sm leading-relaxed text-gray-700">{content}</p>
-    </div>
-  );
-}
-
-function SmallInfoPanel({
-  title,
-  items,
-}: {
-  title: string;
-  items: string[];
-}) {
+function SmallInfoPanel({ title, items }: { title: string; items: string[] }) {
   return (
     <div className="rounded-xl border bg-white p-4">
       <p className="mb-3 text-xs uppercase tracking-wide text-gray-500">
@@ -1532,50 +1766,6 @@ function SmallInfoPanel({
           <p key={idx} className="text-sm leading-relaxed text-gray-700">
             • {item}
           </p>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WaterClassCompactReference() {
-  const classItems = [
-    { className: "Class I", use: "Conservation, Water Supply I, sensitive fishery" },
-    { className: "Class IIA", use: "Water Supply II, sensitive aquatic species" },
-    { className: "Class IIB", use: "Recreational use with body contact" },
-    { className: "Class III", use: "Water Supply III, common fishery, livestock" },
-    { className: "Class IV", use: "Irrigation" },
-    { className: "Class V", use: "None of the above" },
-  ];
-
-  return (
-    <div className="rounded-2xl border bg-gradient-to-b from-slate-50 to-white p-4 shadow-sm">
-      <div className="mb-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
-          NWQS / WQI Reference
-        </p>
-        <h3 className="mt-1 text-sm font-semibold text-gray-900">
-          Water Class Uses
-        </h3>
-        <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
-          Compact reference for Class I–V based on National Water Quality
-          Standards and Water Quality Index.
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        {classItems.map((item) => (
-          <div
-            key={item.className}
-            className="rounded-xl border bg-white px-3 py-2"
-          >
-            <p className="text-xs font-semibold text-gray-800">
-              {item.className}
-            </p>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-gray-600">
-              {item.use}
-            </p>
-          </div>
         ))}
       </div>
     </div>
@@ -1615,7 +1805,6 @@ function DetailedInsightModal({
         className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
         onClick={onClose}
       />
-
       <div className="absolute inset-0 flex items-center justify-center p-4">
         <div className="max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-3xl border bg-white shadow-2xl">
           <div className="flex items-start justify-between gap-4 border-b bg-gradient-to-r from-indigo-50 to-white px-6 py-5">
@@ -1626,7 +1815,6 @@ function DetailedInsightModal({
               <p className="mt-1 text-sm text-gray-500">
                 Detailed AI interpretation for current river condition
               </p>
-
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="inline-flex items-center rounded-full border bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
                   Risk Level: {riskLevel}
@@ -1656,7 +1844,8 @@ function DetailedInsightModal({
                   Generating detailed AI insight...
                 </p>
                 <p className="mt-1 text-sm text-gray-500">
-                  OpenAI is expanding each AI decision component into a fuller explanation
+                  OpenAI is expanding each AI decision component into a fuller
+                  explanation
                 </p>
               </div>
             )}
@@ -1699,8 +1888,12 @@ function DetailedInsightModal({
                   />
 
                   <ExpandedDecisionCard
-                    title={data?.sourceTitle || "Predicted Source of Pollution"}
-                    headline={decision?.predictedSourceOfPollution || fallbackSource}
+                    title={
+                      data?.sourceTitle || "Predicted Source of Pollution"
+                    }
+                    headline={
+                      decision?.predictedSourceOfPollution || fallbackSource
+                    }
                     description={
                       data?.sourceDetail ||
                       "This section explains the likely source hypothesis behind the current river condition."
@@ -1765,6 +1958,8 @@ function formatModalDateTime(ts: string) {
   if (!ts) return "-";
 
   const date = new Date(ts);
+  if (isNaN(date.getTime())) return ts;
+
   const day = String(date.getDate()).padStart(2, "0");
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const year = date.getFullYear();

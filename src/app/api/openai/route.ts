@@ -8,6 +8,11 @@ const openaiClient = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+type ChatMessage = {
+  role: "system" | "user";
+  content: string;
+};
+
 function safeJsonParse(text: string) {
   try {
     return JSON.parse(text);
@@ -36,6 +41,61 @@ function normalizeConfidence(value: unknown, fallback = 75) {
   return Math.max(0, Math.min(100, Math.round(num)));
 }
 
+function guessPollutionSource(aiInsight?: any) {
+  const dominant = aiInsight?.dominantParameters || [];
+  const anomalyText = (aiInsight?.anomalies || [])
+    .map((a: any) => `${a.label} ${a.message}`)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    dominant.includes("Ammonia") &&
+    (dominant.includes("COD") || dominant.includes("BOD"))
+  ) {
+    return "Possible domestic wastewater or organic discharge";
+  }
+
+  if (dominant.includes("Turbidity")) {
+    return "Possible sediment runoff or land disturbance";
+  }
+
+  if (dominant.includes("Conductivity") || anomalyText.includes("ph")) {
+    return "Possible chemical or industrial discharge";
+  }
+
+  if (dominant.includes("DO")) {
+    return "Possible oxygen depletion caused by organic contamination";
+  }
+
+  return "Potential mixed-source pollution requires further investigation";
+}
+
+function buildQuickInsightFallback(input: {
+  aiInsight?: any;
+  nwqsSummary?: any;
+}) {
+  const { aiInsight, nwqsSummary } = input;
+
+  const overallClass =
+    aiInsight?.overallClass || nwqsSummary?.overallClass || "III";
+  const overallStatus =
+    aiInsight?.riskLevel || nwqsSummary?.overallStatus || "Moderate";
+
+  const dominantReason =
+    nwqsSummary?.dominantReason ||
+    (Array.isArray(aiInsight?.dominantParameters) &&
+    aiInsight.dominantParameters.length > 0
+      ? `mainly influenced by ${aiInsight.dominantParameters.join(", ")}`
+      : "influenced by multiple core parameters");
+
+  const recommendation =
+    aiInsight?.recommendations?.[0] || "Closer monitoring is recommended.";
+
+  return {
+    insight: `The latest snapshot indicates a ${overallStatus.toLowerCase()} water quality condition at Class ${overallClass}, ${dominantReason}. This pattern suggests elevated pollution stress in the monitored area and should be reviewed together with recent trend movement. ${recommendation}`,
+  };
+}
+
 function buildDecisionSummaryFallback(input: {
   aiInsight?: any;
   latestRow?: any;
@@ -43,7 +103,8 @@ function buildDecisionSummaryFallback(input: {
 }) {
   const { aiInsight, nwqsSummary } = input;
 
-  const overallClass = aiInsight?.overallClass || nwqsSummary?.overallClass || "III";
+  const overallClass =
+    aiInsight?.overallClass || nwqsSummary?.overallClass || "III";
   const riskLevel =
     aiInsight?.riskLevel || nwqsSummary?.overallStatus || "Moderate";
 
@@ -81,7 +142,8 @@ function buildExpandedDetailFallback(input: {
   );
 
   const overallClass = aiInsight?.overallClass || "III";
-  const riskLevel = aiDecision?.pollutionRiskLevel || aiInsight?.riskLevel || "Moderate";
+  const riskLevel =
+    aiDecision?.pollutionRiskLevel || aiInsight?.riskLevel || "Moderate";
   const source =
     aiDecision?.predictedSourceOfPollution || guessPollutionSource(aiInsight);
   const recommendation =
@@ -121,33 +183,10 @@ function buildExpandedDetailFallback(input: {
   };
 }
 
-function guessPollutionSource(aiInsight?: any) {
-  const dominant = aiInsight?.dominantParameters || [];
-  const anomalyText = (aiInsight?.anomalies || [])
-    .map((a: any) => `${a.label} ${a.message}`)
-    .join(" ")
-    .toLowerCase();
-
-  if (
-    dominant.includes("Ammonia") &&
-    (dominant.includes("COD") || dominant.includes("BOD"))
-  ) {
-    return "Possible domestic wastewater or organic discharge";
-  }
-
-  if (dominant.includes("Turbidity")) {
-    return "Possible sediment runoff or land disturbance";
-  }
-
-  if (dominant.includes("Conductivity") || anomalyText.includes("ph")) {
-    return "Possible chemical or industrial discharge";
-  }
-
-  if (dominant.includes("DO")) {
-    return "Possible oxygen depletion caused by organic contamination";
-  }
-
-  return "Potential mixed-source pollution requires further investigation";
+function sanitizeQuickInsight(parsed: any, fallback: any) {
+  return {
+    insight: parsed?.insight || fallback.insight,
+  };
 }
 
 function sanitizeDecisionSummary(parsed: any, fallback: any) {
@@ -164,8 +203,7 @@ function sanitizeDecisionSummary(parsed: any, fallback: any) {
     ),
     recommendedAction:
       parsed?.recommendedAction || fallback.recommendedAction,
-    executiveSummary:
-      parsed?.executiveSummary || fallback.executiveSummary,
+    executiveSummary: parsed?.executiveSummary || fallback.executiveSummary,
   };
 }
 
@@ -189,11 +227,11 @@ function sanitizeExpandedDetail(parsed: any, fallback: any) {
   };
 }
 
-async function callOpenAI(messages: { role: "system" | "user"; content: string }[]) {
+async function callOpenAI(messages: ChatMessage[], maxTokens = 1400) {
   const res = await openaiClient.chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0.2,
-    max_tokens: 1400,
+    max_tokens: maxTokens,
     response_format: { type: "json_object" },
     messages,
   });
@@ -201,9 +239,7 @@ async function callOpenAI(messages: { role: "system" | "user"; content: string }
   return res.choices?.[0]?.message?.content?.trim() || "{}";
 }
 
-async function callDeepSeek(
-  messages: { role: "system" | "user"; content: string }[]
-) {
+async function callDeepSeek(messages: ChatMessage[], maxTokens = 1400) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
 
@@ -220,7 +256,7 @@ async function callDeepSeek(
     body: JSON.stringify({
       model,
       temperature: 0.2,
-      max_tokens: 1400,
+      max_tokens: maxTokens,
       messages,
     }),
   });
@@ -238,6 +274,30 @@ async function callDeepSeek(
 
   const data = safeJsonParse(raw);
   return data?.choices?.[0]?.message?.content?.trim() || "{}";
+}
+
+async function runProvider(params: {
+  provider: string;
+  systemPrompt: string;
+  userPrompt: string;
+  maxTokens?: number;
+}) {
+  const { provider, systemPrompt, userPrompt, maxTokens = 1400 } = params;
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ];
+
+  if (provider === "openai") {
+    return callOpenAI(messages, maxTokens);
+  }
+
+  if (provider === "deepseek") {
+    return callDeepSeek(messages, maxTokens);
+  }
+
+  throw new Error("Invalid provider");
 }
 
 export async function POST(req: NextRequest) {
@@ -263,6 +323,68 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (mode === "quick_insight") {
+      const fallback = buildQuickInsightFallback({
+        aiInsight,
+        nwqsSummary,
+      });
+
+      const systemPrompt = `
+You are an environmental AI analyst for a river water quality dashboard.
+
+Your task is to generate a brief AI insight for the Latest Snapshot section.
+
+Rules:
+- Write one short paragraph only.
+- Write 2 to 4 sentences.
+- Keep it concise but still informative.
+- Mention the current condition and likely main drivers when supported.
+- Avoid scientific overclaim.
+- Do not invent unsupported numeric values.
+- Do not return bullet points.
+- Return valid JSON only.
+- Do not include markdown fences.
+`;
+
+      const userPayload = {
+        latestRow: latestRow || null,
+        recentRows: safeRows.slice(0, 60),
+        nwqsSummary: nwqsSummary || null,
+        aiInsight: aiInsight || null,
+        outputFormat: {
+          insight: "string",
+        },
+      };
+
+      const userPrompt = `
+Generate a brief AI insight in valid JSON with exactly this key:
+- insight
+
+Requirements:
+- 2 to 4 sentences
+- one paragraph only
+- concise but not too short
+- suitable for dashboard display
+- professional and readable
+- return only valid JSON
+
+Input:
+${JSON.stringify(userPayload, null, 2)}
+`;
+
+      const content = await runProvider({
+        provider,
+        systemPrompt,
+        userPrompt,
+        maxTokens: 300,
+      });
+
+      const parsed = safeJsonParse(stripCodeFence(content));
+      const sanitized = sanitizeQuickInsight(parsed, fallback);
+
+      return NextResponse.json(sanitized);
+    }
+
     if (mode === "decision_summary") {
       const fallback = buildDecisionSummaryFallback({
         latestRow,
@@ -279,9 +401,9 @@ Rules:
 - Focus on operational interpretation, not scientific overclaim.
 - Be concise, specific, and decision-oriented.
 - Do not invent unsupported numeric values.
-- "Predicted Source of Pollution" must be a likely hypothesis, not a confirmed fact.
-- "Confidence Score" must be an integer from 0 to 100.
-- "Recommended Action" must be practical and short.
+- Predicted Source of Pollution must be a likely hypothesis, not a confirmed fact.
+- Confidence Score must be an integer from 0 to 100.
+- Recommended Action must be practical and short.
 - Return valid JSON only.
 - Do not include markdown fences.
 `;
@@ -313,30 +435,18 @@ Generate an AI Decision Panel in valid JSON with exactly these keys:
 Requirements:
 - currentWaterQualityStatus: short phrase such as "Good", "Moderate", "Critical", or "Class IV"
 - pollutionRiskLevel: one of Low, Moderate, High, Critical when possible
-- executiveSummary: 2-4 sentences, concise but informative
+- executiveSummary: 2 to 4 sentences, concise but informative
 
 Input:
 ${JSON.stringify(userPayload, null, 2)}
 `;
 
-      let content = "{}";
-
-      if (provider === "openai") {
-        content = await callOpenAI([
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ]);
-      } else if (provider === "deepseek") {
-        content = await callDeepSeek([
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ]);
-      } else {
-        return NextResponse.json(
-          { error: "Invalid provider" },
-          { status: 400 }
-        );
-      }
+      const content = await runProvider({
+        provider,
+        systemPrompt,
+        userPrompt,
+        maxTokens: 1400,
+      });
 
       const parsed = safeJsonParse(stripCodeFence(content));
       const sanitized = sanitizeDecisionSummary(parsed, fallback);
@@ -360,7 +470,7 @@ Rules:
 - Do not simply repeat the same short sentence from the summary panel.
 - Explain the reasoning, implication, and practical meaning of each section.
 - Do not invent unsupported numeric values.
-- Keep "Predicted Source of Pollution" as a hypothesis, not a confirmed fact.
+- Keep Predicted Source of Pollution as a hypothesis, not a confirmed fact.
 - The tone should be professional, clear, and operationally useful.
 - Return valid JSON only.
 - Do not include markdown fences.
@@ -402,37 +512,25 @@ Generate a detailed expanded AI insight in valid JSON with exactly these keys:
 - recommendationDetail
 
 Requirements:
-- Make the content clearly more detailed than the compact dashboard cards.
+- clearly more detailed than the compact dashboard cards
 - predictionDetail: explain what the prediction means in practice
 - interpretationDetail: explain why the AI interprets the condition that way
 - sourceDetail: explain the likely pollution-source hypothesis and its limits
 - confidenceDetail: explain how the confidence should be interpreted
 - recommendationDetail: explain what practical next actions should follow
-- Each detail should usually be around 2-5 sentences
-- Return only valid JSON
+- each detail should usually be around 2 to 5 sentences
+- return only valid JSON
 
 Input:
 ${JSON.stringify(userPayload, null, 2)}
 `;
 
-      let content = "{}";
-
-      if (provider === "openai") {
-        content = await callOpenAI([
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ]);
-      } else if (provider === "deepseek") {
-        content = await callDeepSeek([
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ]);
-      } else {
-        return NextResponse.json(
-          { error: "Invalid provider" },
-          { status: 400 }
-        );
-      }
+      const content = await runProvider({
+        provider,
+        systemPrompt,
+        userPrompt,
+        maxTokens: 1400,
+      });
 
       const parsed = safeJsonParse(stripCodeFence(content));
       const sanitized = sanitizeExpandedDetail(parsed, fallback);
@@ -441,7 +539,7 @@ ${JSON.stringify(userPayload, null, 2)}
     }
 
     return NextResponse.json(
-      { error: "Invalid mode" },
+      { error: `Invalid mode: ${String(mode)}` },
       { status: 400 }
     );
   } catch (error: any) {

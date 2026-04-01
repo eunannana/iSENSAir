@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import HeroHeader from "@/components/HeroHeader";
 import WeconTable from "@/components/WeconTable";
@@ -18,6 +18,8 @@ export default function Page() {
     "connecting" | "booting" | "loading"
   >("connecting");
   const [retryAttempt, setRetryAttempt] = useState(0);
+
+  const mapSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const handleRetry = (
@@ -55,6 +57,13 @@ export default function Page() {
     checkAPI();
   }, []);
 
+  const scrollToMapSection = () => {
+    mapSectionRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
   return (
     <main className="min-h-screen bg-gray-50">
       <LoadingScreen
@@ -70,16 +79,26 @@ export default function Page() {
       {!initialLoading && (
         <>
           {!selectedArea ? (
-            <HeroHeader>
-                  <MapSelector onSelect={setSelectedArea} />
-            </HeroHeader>
+            <>
+              {/* Section 1: Hero */}
+              <HeroHeader onScrollToMap={scrollToMapSection} />
+
+              {/* Section 2: Map */}
+              <section
+                ref={mapSectionRef}
+                id="map-section"
+                className="scroll-mt-24 bg-gray-50 py-14 md:py-20"
+              >
+                <MapSelector onSelect={setSelectedArea} />
+              </section>
+            </>
           ) : (
             <section className="py-8">
-              <div className="mx-auto max-w-6xl px-4 space-y-6">
+              <div className="mx-auto max-w-6xl space-y-6 px-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <button
                     onClick={() => setSelectedArea(null)}
-                    className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                    className="text-sm font-medium text-blue-600 transition hover:text-blue-800"
                   >
                     ← Back to Map
                   </button>

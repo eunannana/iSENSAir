@@ -1,13 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { ReactNode } from "react";
 
 type HeroHeaderProps = {
-  children?: ReactNode;
+  onScrollToMap: () => void;
 };
 
-export default function HeroHeader({ children }: HeroHeaderProps) {
+export default function HeroHeader({ onScrollToMap }: HeroHeaderProps) {
   return (
     <section className="relative isolate w-full overflow-hidden">
       {/* Background */}
@@ -22,59 +21,49 @@ export default function HeroHeader({ children }: HeroHeaderProps) {
       />
 
       {/* Overlay */}
-      <div className="absolute inset-0 bg-white/85 backdrop-blur-[2px]" />
+      <div className="absolute inset-0 bg-white/84 backdrop-blur-[2px]" />
 
-      {/* Main Content */}
-      <div className="relative mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-7xl flex-col px-4 pt-8 pb-6 md:px-6 md:pt-10 md:pb-8">
-        {/* Top Hero Content */}
-        <div className="flex flex-col items-center text-center">
-          {/* Logo */}
-          <div className="mx-auto w-full max-w-3xl">
-            <Image
-              src="/img/logo.png"
-              alt="UMPSA • EAESB • PPRN"
-              width={1600}
-              height={400}
-              className="h-auto w-full object-contain opacity-95"
-              priority
-            />
-          </div>
-
-          {/* Title */}
-          <h1 className="mt-8 text-center text-2xl font-extrabold leading-tight tracking-tight text-gray-800 md:text-4xl xl:text-5xl">
-            SMART RIVER WATER QUALITY MONITORING
-            <br className="hidden md:block" />
-            WITH AI-DRIVEN DECISION SUPPORT
-          </h1>
-
-          {/* Tagline */}
-          <p className="mt-3 max-w-2xl text-center text-base text-gray-600 md:text-lg">
-            From sensor data to intelligent insight, prediction, and action
-          </p>
-
-          {/* AI Status Badge */}
-          <div className="mt-5 flex justify-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white/95 px-4 py-2 text-sm text-gray-700 shadow-sm backdrop-blur">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
-              AI Monitoring System Active
-            </div>
-          </div>
-
-          {/* CTA Hint */}
-          <div className="mt-5 text-center">
-            <p className="text-sm text-gray-500">
-              Select a monitoring area below to view AI-based analysis and
-              insights
-            </p>
-          </div>
+      {/* Content */}
+      <div className="relative mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-7xl flex-col items-center justify-center px-4 py-12 text-center md:px-6 md:py-16">
+        
+        {/* Logo */}
+        <div className="mx-auto w-full max-w-2xl">
+          <Image
+            src="/img/logo.png"
+            alt="UMPSA • EAESB • PPRN"
+            width={1600}
+            height={400}
+            className="h-auto w-full object-contain opacity-95"
+            priority
+          />
         </div>
 
-        {/* Child content still inside hero area */}
-        {children ? (
-          <div className="mt-5 md:mt-6 flex-1">
-            <div className="mx-auto w-full max-w-5xl">{children}</div>
-          </div>
-        ) : null}
+        {/* Title (2 BARIS ONLY) */}
+        <h1 className="mt-6 max-w-4xl text-center text-3xl font-extrabold leading-tight tracking-tight text-gray-800 sm:text-4xl lg:text-5xl">
+          SMART RIVER WATER QUALITY MONITORING
+          <br />
+          AI-DRIVEN DECISION SUPPORT
+        </h1>
+
+        {/* Tagline */}
+        <p className="mt-4 max-w-2xl text-center text-sm text-gray-600 sm:text-base md:text-lg">
+          From sensor data to intelligent insight, prediction, and action
+        </p>
+
+        {/* TEXT (dipindah ke atas button) */}
+        <p className="mt-6 text-sm text-gray-500">
+          Explore the monitoring locations and open the AI-based dashboard
+        </p>
+
+        {/* BUTTON (dipindah ke bawah) */}
+        <div className="mt-4">
+          <button
+            onClick={onScrollToMap}
+            className="inline-flex items-center justify-center rounded-full bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+          >
+            View Monitoring Map
+          </button>
+        </div>
       </div>
     </section>
   );
