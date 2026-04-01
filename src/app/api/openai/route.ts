@@ -8,32 +8,27 @@ const openaiClient = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-type ChatMessage = {
-  role: "system" | "user";
-  content: string;
-};
-
 type DriverSummary = {
-  key?: string;
-  label?: string;
-  unit?: string;
-  latest?: number | null;
-  average?: number | null;
-  minimum?: number | null;
-  maximum?: number | null;
-  median?: number | null;
-  changePct?: number | null;
-  exceedanceCount?: number;
-  exceedanceRate?: number;
-  severityScore?: number;
-  direction?: "increasing" | "decreasing" | "stable" | "fluctuating";
-  likelyImpact?: string;
+  key: string;
+  label: string;
+  unit: string;
+  latest: number | null;
+  average: number | null;
+  minimum: number | null;
+  maximum: number | null;
+  median: number | null;
+  changePct: number | null;
+  exceedanceCount: number;
+  exceedanceRate: number;
+  severityScore: number;
+  direction: "increasing" | "decreasing" | "stable" | "fluctuating";
+  likelyImpact: string;
 };
 
 type SourceHypothesis = {
-  source?: string;
-  confidence?: number;
-  reason?: string;
+  source: string;
+  confidence: number;
+  reason: string;
 };
 
 function safeJsonParse(text: string) {
@@ -52,481 +47,230 @@ function stripCodeFence(text: string) {
     .trim();
 }
 
-function normalizeConfidence(value: unknown, fallback = 75) {
+function normalizeNumber(value: unknown, fallback = 0) {
   const num =
     typeof value === "number"
       ? value
       : typeof value === "string"
-      ? parseFloat(value)
-      : fallback;
+        ? parseFloat(value)
+        : fallback;
 
-  if (Number.isNaN(num)) return fallback;
-  return Math.max(0, Math.min(100, Math.round(num)));
+  return Number.isFinite(num) ? num : fallback;
 }
 
-function formatMetric(value: unknown, unit = "") {
-  const num =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-      ? parseFloat(value)
-      : NaN;
-
-  if (Number.isNaN(num)) return "-";
-  return `${num.toFixed(2)}${unit ? ` ${unit}` : ""}`;
+function normalizeConfidence(value: unknown, fallback = 80) {
+  const score = normalizeNumber(value, fallback);
+  return Math.max(50, Math.min(99, Math.round(score)));
 }
 
-function deriveRiskLevelFromClass(className?: string) {
-  switch (className) {
-    case "I":
-    case "II":
-      return "Low";
-    case "III":
-      return "Moderate";
-    case "IV":
-      return "High";
-    case "V":
-      return "Critical";
-    default:
-      return "Moderate";
-  }
+function compactText(value: unknown, fallback = "") {
+  if (typeof value !== "string") return fallback;
+  return value.trim() || fallback;
 }
 
-function guessPollutionSourceFromHistory(historicalSummary?: any) {
-  const primarySource = historicalSummary?.primarySource;
-  if (primarySource?.source) return primarySource.source;
-
-  const topDrivers: DriverSummary[] = Array.isArray(historicalSummary?.topDrivers)
-    ? historicalSummary.topDrivers
-    : [];
-
-  const labels = topDrivers.map((item) => (item.label || "").toLowerCase());
-
-  if (
-    labels.includes("nh3") &&
-    (labels.includes("bod") || labels.includes("cod"))
-  ) {
-    return "Possible domestic wastewater or sewage-related discharge";
-  }
-
-  if (labels.includes("cod") && (labels.includes("ct") || labels.includes("ph"))) {
-    return "Possible industrial or chemical discharge";
-  }
-
-  if (labels.includes("tr")) {
-    return "Possible sediment runoff, erosion, or land disturbance";
-  }
-
-  if (labels.includes("nh3")) {
-    return "Possible agricultural runoff or livestock-related pollution";
-  }
-
-  return "Potential mixed-source pollution requiring field verification";
+function formatMetric(value: number | null, unit?: string) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${value.toFixed(2)}${unit ? ` ${unit}` : ""}`;
 }
 
-function buildQuickInsightFallback(input: {
-  aiInsight?: any;
-  nwqsSummary?: any;
-}) {
-  const { aiInsight, nwqsSummary } = input;
+function buildQuickInsightFallback(aiInsight: any, nwqsSummary: any) {
+  const dominant =
+    aiInsight?.dominantParameters?.length > 0
+      ? aiInsight.dominantParameters.join(", ")
+      : "multiple parameters";
 
-  const overallClass =
-    aiInsight?.overallClass || nwqsSummary?.overallClass || "III";
-  const overallStatus =
-    aiInsight?.riskLevel || nwqsSummary?.overallStatus || "Moderate";
-
-  const dominantReason =
-    nwqsSummary?.dominantReason ||
-    (Array.isArray(aiInsight?.dominantParameters) &&
-    aiInsight.dominantParameters.length > 0
-      ? `mainly influenced by ${aiInsight.dominantParameters.join(", ")}`
-      : "influenced by multiple core parameters");
-
-  const recommendation =
-    aiInsight?.recommendations?.[0] || "Closer monitoring is recommended.";
-
-  return {
-    insight: `The latest snapshot indicates a ${overallStatus.toLowerCase()} water quality condition at Class ${overallClass}, ${dominantReason}. This pattern suggests elevated pollution stress in the monitored area and should be reviewed together with recent trend movement. ${recommendation}`,
-  };
+  return `The latest snapshot indicates Class ${
+    nwqsSummary?.overallClass || "-"
+  }, mainly influenced by ${dominant}. This suggests current pollution pressure that should be checked together with the recent short-term trend.`;
 }
 
-function buildHistoricalDecisionFallback(input: {
-  latestRow?: any;
-  historicalSummary?: any;
-  nwqsSummary?: any;
-}) {
-  const { historicalSummary, nwqsSummary } = input;
+function buildHistoricalExecutiveSummary(
+  historicalSummary: any,
+  nwqsSummary: any,
+  historicalWindowDays = 7,
+) {
+  const topDrivers: DriverSummary[] = historicalSummary?.topDrivers || [];
+  const overallClass = nwqsSummary?.overallClass
+    ? `Class ${nwqsSummary.overallClass}`
+    : "the current class";
 
-  const overallClass = nwqsSummary?.overallClass || "III";
-  const riskLevel =
-    nwqsSummary?.overallStatus
-      ? deriveRiskLevelFromClass(nwqsSummary.overallClass)
-      : "Moderate";
+  if (!topDrivers.length) {
+    return `The ${historicalWindowDays}-day decision is waiting for enough valid records to identify the main pollution driver clearly.`;
+  }
 
-  const topDrivers: DriverSummary[] = Array.isArray(historicalSummary?.topDrivers)
-    ? historicalSummary.topDrivers
-    : [];
+  const top = topDrivers[0];
+  const second = topDrivers[1];
 
-  const mainDriversText =
-    topDrivers.length > 0
-      ? topDrivers
-          .slice(0, 3)
-          .map(
-            (d) =>
-              `${d.label} (avg ${formatMetric(d.average, d.unit)}, latest ${formatMetric(
-                d.latest,
-                d.unit
-              )})`
-          )
-          .join("; ")
-      : "No dominant parameter identified";
+  return `Over the last ${historicalWindowDays} days, the river remained at ${overallClass}, mainly driven by ${top.label}${second ? ` and ${second.label}` : ""}. ${top.label} showed avg ${formatMetric(
+    top.average,
+    top.unit,
+  )}, latest ${formatMetric(top.latest, top.unit)}, and exceedance ${
+    top.exceedanceRate
+  }%, indicating repeated stress rather than a one-time spike.`;
+}
 
-  const primarySource =
-    historicalSummary?.primarySource?.source ||
-    guessPollutionSourceFromHistory(historicalSummary);
+function buildMainContributorSummary(topDrivers: DriverSummary[]) {
+  if (!topDrivers?.length) return "Not identified";
 
-  const sourceReason =
-    historicalSummary?.primarySource?.reason ||
-    "This source hypothesis is inferred from the 30-day relationship among the dominant parameters.";
+  return topDrivers
+    .slice(0, 3)
+    .map(
+      (driver) =>
+        `${driver.label} (avg ${formatMetric(
+          driver.average,
+          driver.unit,
+        )}, exceedance ${driver.exceedanceRate}%)`,
+    )
+    .join("; ");
+}
 
-  const anomalyNotes: string[] = Array.isArray(historicalSummary?.anomalyNotes)
-    ? historicalSummary.anomalyNotes
-    : [];
+function buildRecommendedActionFallback(historicalSummary: any) {
+  const source = String(
+    historicalSummary?.primarySource?.source || "",
+  ).toLowerCase();
 
-  const recommendations = [
-    "Increase monitoring frequency for the affected river segment.",
-    "Verify dominant parameter spikes through field inspection.",
-    "Inspect upstream discharge and runoff pathways.",
+  if (source.includes("industrial") || source.includes("chemical")) {
+    return "Inspect upstream industrial or chemical discharge points, verify COD and pH abnormalities, and increase short-interval monitoring.";
+  }
+
+  if (source.includes("wastewater") || source.includes("sewage")) {
+    return "Inspect domestic wastewater discharge points, verify ammonia and BOD hotspots, and increase field checks near settlements.";
+  }
+
+  if (source.includes("agricultural") || source.includes("livestock")) {
+    return "Check agricultural runoff channels, livestock-related discharge, and ammonia loading around drainage pathways.";
+  }
+
+  if (source.includes("sediment") || source.includes("runoff")) {
+    return "Inspect erosion-prone zones, stormwater entry points, and disturbed riverbank areas contributing to turbidity stress.";
+  }
+
+  return "Increase monitoring frequency, verify the dominant abnormal parameters in the field, and inspect possible upstream discharge sources.";
+}
+
+function buildRecommendationListFallback(historicalSummary: any) {
+  const topDrivers: DriverSummary[] = historicalSummary?.topDrivers || [];
+
+  const items = [
+    "Increase monitoring frequency for the affected river section.",
+    "Validate abnormal readings through field inspection.",
+    "Review upstream discharge or runoff activity.",
   ];
 
   if (topDrivers.some((d) => d.key === "NH_Sensor")) {
-    recommendations.push(
-      "Prioritise tracing ammonia-related input from domestic, agricultural, or livestock sources."
+    items.push(
+      "Prioritise ammonia source tracing near settlements, farms, or livestock areas.",
     );
   }
 
   if (topDrivers.some((d) => d.key === "COD_Sensor")) {
-    recommendations.push(
-      "Check for possible chemical or industrial pollution sources linked to COD pressure."
+    items.push(
+      "Check for chemical or industrial discharge signatures related to COD stress.",
     );
   }
 
-  const recommendedAction =
-    primarySource.toLowerCase().includes("industrial")
-      ? "Increase monitoring frequency and inspect possible industrial or chemical discharge points upstream."
-      : primarySource.toLowerCase().includes("wastewater") ||
-        primarySource.toLowerCase().includes("sewage")
-      ? "Increase monitoring frequency and inspect possible domestic wastewater or sewage discharge sources."
-      : primarySource.toLowerCase().includes("sediment")
-      ? "Inspect runoff pathways, erosion-prone zones, and recent land disturbance affecting the river."
-      : primarySource.toLowerCase().includes("agricultural")
-      ? "Inspect nearby agricultural or livestock runoff pathways and validate ammonia-related loading."
-      : "Increase monitoring frequency and investigate the dominant parameter drivers identified during the last 30 days.";
-
-  const executiveSummary = `Over the last 30 days, the river condition is interpreted as ${riskLevel.toLowerCase()} risk, not merely from a single latest reading but from repeated monthly behaviour across the main parameters. The strongest contributors are ${mainDriversText}. This longer pattern suggests ${primarySource.toLowerCase()}, so the current decision should be read as a historical AI assessment rather than a generic snapshot-level statement.`;
-
-  const periodOverview =
-    topDrivers.length > 0
-      ? `${topDrivers[0].label} was the strongest monthly driver with average ${formatMetric(
-          topDrivers[0].average,
-          topDrivers[0].unit
-        )}, latest ${formatMetric(
-          topDrivers[0].latest,
-          topDrivers[0].unit
-        )}, and exceedance rate ${topDrivers[0].exceedanceRate ?? 0}%. ${
-          topDrivers[1]
-            ? `${topDrivers[1].label} also remained influential with ${topDrivers[1].direction || "stable"} movement and maximum ${formatMetric(
-                topDrivers[1].maximum,
-                topDrivers[1].unit
-              )}.`
-            : ""
-        }`
-      : "No sufficient 30-day historical pattern is available.";
-
-  return {
-    title: "30-Day AI Decision Support",
-    historicalWindowLabel: historicalSummary?.windowLabel || "Last 30 days",
-    currentWaterQualityStatus:
-      overallClass === "V" ? "Critical" : `Class ${overallClass}`,
-    pollutionRiskLevel: riskLevel,
-    confidenceScore: normalizeConfidence(historicalSummary?.confidenceScore, 80),
-    executiveSummary,
-    periodOverview,
-    recommendedAction,
-    recommendations: recommendations.slice(0, 5),
-    mainContributorSummary: mainDriversText,
-    predictedSourceOfPollution: primarySource,
-    sourceRationale: sourceReason,
-    dominantDrivers: topDrivers.slice(0, 5),
-    likelySources: Array.isArray(historicalSummary?.sourceHypotheses)
-      ? historicalSummary.sourceHypotheses
-      : [],
-    anomalyNotes: anomalyNotes.slice(0, 6),
-  };
+  return items.slice(0, 4);
 }
 
-function buildExpandedHistoricalFallback(input: {
-  aiDecision?: any;
-  historicalSummary?: any;
-  nwqsSummary?: any;
-}) {
-  const { aiDecision, historicalSummary, nwqsSummary } = input;
+function buildExpandedFallback(
+  historicalSummary: any,
+  aiDecision: any,
+  nwqsSummary: any,
+  historicalWindowDays = 7,
+) {
+  const topDrivers: DriverSummary[] = historicalSummary?.topDrivers || [];
+  const sourceHypotheses: SourceHypothesis[] =
+    historicalSummary?.sourceHypotheses || [];
+  const primarySource = sourceHypotheses[0] || null;
 
-  const overallClass = nwqsSummary?.overallClass || "III";
-  const riskLevel =
-    aiDecision?.pollutionRiskLevel ||
-    deriveRiskLevelFromClass(overallClass);
+  const top = topDrivers[0];
+  const second = topDrivers[1];
+  const third = topDrivers[2];
 
-  const confidence = normalizeConfidence(
-    aiDecision?.confidenceScore ?? historicalSummary?.confidenceScore,
-    80
-  );
+  const classLabel =
+    aiDecision?.currentWaterQualityStatus ||
+    (nwqsSummary?.overallClass ? `Class ${nwqsSummary.overallClass}` : "Class -");
 
-  const dominantDrivers: DriverSummary[] = Array.isArray(
-    aiDecision?.dominantDrivers
-  )
-    ? aiDecision.dominantDrivers
-    : Array.isArray(historicalSummary?.topDrivers)
-    ? historicalSummary.topDrivers
-    : [];
+  const overallNarrative = top
+    ? `The 7-day decision indicates ${classLabel}, mainly influenced by ${top.label}${second ? ` and ${second.label}` : ""}. The strongest concern comes from repeated abnormal values, not from a single isolated spike.`
+    : `The 7-day decision summarises the strongest abnormal parameters, likely pollution source, and required follow-up action.`;
 
-  const sourceHypotheses: SourceHypothesis[] = Array.isArray(
-    aiDecision?.likelySources
-  )
-    ? aiDecision.likelySources
-    : Array.isArray(historicalSummary?.sourceHypotheses)
-    ? historicalSummary.sourceHypotheses
-    : [];
+  const predictionDetail = top
+    ? `${top.label} is the main anomaly with avg ${formatMetric(
+        top.average,
+        top.unit,
+      )}, latest ${formatMetric(top.latest, top.unit)}, max ${formatMetric(
+        top.maximum,
+        top.unit,
+      )}, and exceedance ${top.exceedanceRate}%. ${
+        second
+          ? `${second.label} also contributed with avg ${formatMetric(
+              second.average,
+              second.unit,
+            )} and exceedance ${second.exceedanceRate}%.`
+          : ""
+      }`
+    : `There is not yet enough valid evidence to describe the dominant 7-day anomaly clearly.`;
 
-  const anomalyNotes: string[] = Array.isArray(aiDecision?.anomalyNotes)
-    ? aiDecision.anomalyNotes
-    : Array.isArray(historicalSummary?.anomalyNotes)
-    ? historicalSummary.anomalyNotes
-    : [];
+  const sourceDetail = primarySource
+    ? `The strongest source hypothesis is ${primarySource.source.toLowerCase()} because ${primarySource.reason}`
+    : `The source pattern is still mixed and should be verified in the field.`;
 
-  const source =
-    aiDecision?.predictedSourceOfPollution ||
-    historicalSummary?.primarySource?.source ||
-    guessPollutionSourceFromHistory(historicalSummary);
+  const recommendationDetail = buildRecommendedActionFallback(historicalSummary);
 
-  const recommendation =
-    aiDecision?.recommendedAction ||
-    "Increase monitoring frequency and investigate the dominant 30-day pollution drivers.";
-
-  const driverNarrative =
-    dominantDrivers.length > 0
-      ? dominantDrivers
-          .slice(0, 4)
-          .map((driver) => {
-            return `${driver.label} influenced the 30-day assessment through ${
-              driver.direction || "stable"
-            } behaviour, average ${formatMetric(
+  const driverNarrative = topDrivers.length
+    ? topDrivers
+        .slice(0, 3)
+        .map(
+          (driver) =>
+            `${driver.label}: avg ${formatMetric(
               driver.average,
-              driver.unit
-            )}, latest ${formatMetric(driver.latest, driver.unit)}, maximum ${formatMetric(
-              driver.maximum,
-              driver.unit
-            )}, and exceedance rate ${driver.exceedanceRate ?? 0}%. ${
-              driver.likelyImpact || ""
-            }`;
-          })
-          .join(" ")
-      : "No dominant driver pattern could be summarised from the available 30-day data.";
+              driver.unit,
+            )}, latest ${formatMetric(
+              driver.latest,
+              driver.unit,
+            )}, exceedance ${driver.exceedanceRate}%`,
+        )
+        .join(" | ")
+    : "No dominant parameter evidence is available.";
 
-  const sourceDetail =
-    sourceHypotheses.length > 0
-      ? sourceHypotheses
-          .slice(0, 3)
-          .map(
-            (item, index) =>
-              `${index + 1}. ${item.source} (${normalizeConfidence(
-                item.confidence,
-                70
-              )}% confidence): ${item.reason}`
-          )
-          .join(" ")
-      : `${source}. This source remains a working hypothesis based on monthly parameter behaviour rather than direct proof.`;
+  const anomalyNarrative = top
+    ? `${top.label} shows the clearest abnormal pattern across the last ${historicalWindowDays} days. ${
+        third ? `${third.label} adds supporting pollution pressure.` : ""
+      }`
+    : `No anomaly summary could be formed from the current 7-day records.`;
 
-  const anomalyNarrative =
-    anomalyNotes.length > 0
-      ? anomalyNotes.join(" ")
-      : "No major anomaly note was generated from the 30-day dataset.";
-
-  const monthlyPatternNarrative =
-    dominantDrivers.length > 0
-      ? `Across the last 30 days, the overall pattern was driven mainly by ${dominantDrivers
-          .slice(0, 3)
-          .map((d) => d.label)
-          .join(", ")}. The AI decision therefore reflects repeated monthly stress, not a single isolated spike.`
-      : "The monthly pattern could not be described in detail because the 30-day data is limited.";
+  const monthlyPatternNarrative = primarySource
+    ? `The 7-day pattern is more consistent with ${primarySource.source.toLowerCase()} than with a one-time event. Field verification is still required before confirming the source.`
+    : `The 7-day pattern suggests repeated stress, but the source cannot yet be isolated clearly.`;
 
   return {
-    overallNarrative:
-      "This expanded AI insight explains the water quality decision using the last 30 days of historical data. The result is grounded in repeated monthly behaviour of the dominant parameters, their numeric values, exceedance frequency, and the most plausible pollution-source hypothesis.",
-    predictionTitle: "30-Day AI Prediction",
-    predictionDetail: `The current river condition is predicted as ${
-      aiDecision?.currentWaterQualityStatus || `Class ${overallClass}`
-    }. This prediction is not derived from the latest snapshot alone, but from the repeated behaviour observed throughout the last 30 days. The model treats the condition as historically supported because the dominant parameters remained under pressure across multiple readings rather than appearing as a one-time fluctuation.`,
-    interpretationTitle: "Historical AI Interpretation",
-    interpretationDetail: `The AI interprets this river segment as ${riskLevel.toLowerCase()} risk because the dominant parameters repeatedly showed stress across the 30-day window. Key numeric contributors include ${dominantDrivers
-      .slice(0, 3)
-      .map(
-        (d) =>
-          `${d.label} with average ${formatMetric(d.average, d.unit)}, latest ${formatMetric(
-            d.latest,
-            d.unit
-          )}, and exceedance rate ${d.exceedanceRate ?? 0}%`
-      )
-      .join("; ")}. This means the present condition is consistent with a sustained deterioration pattern rather than a generic model response.`,
-    sourceTitle: "Predicted Source of Pollution",
+    overallNarrative,
+    predictionTitle: "7-Day Water Quality Summary",
+    predictionDetail,
+    sourceTitle: "Likely Pollution Source",
     sourceDetail,
-    confidenceTitle: "AI Confidence",
-    confidenceDetail: `The confidence score of ${confidence}% reflects how strongly the last 30 days support the current interpretation through recurring exceedance patterns, repeated dominance of the same parameters, and the number of valid historical records analysed. This confidence should still be treated as decision-support confidence, not absolute certainty, because field validation is still necessary before confirming pollution origin.`,
-    recommendationTitle: "AI Recommendation",
-    recommendationDetail: `${recommendation} Operationally, the next step should focus on validating the dominant parameters in the field, checking upstream discharge points, and confirming whether the deterioration pattern is temporary, recurring, or intensifying over time.`,
+    recommendationTitle: "Recommended Follow-up",
+    recommendationDetail,
     driverNarrative,
     anomalyNarrative,
     monthlyPatternNarrative,
   };
 }
 
-function sanitizeQuickInsight(parsed: any, fallback: any) {
-  return {
-    insight: parsed?.insight || fallback.insight,
-  };
-}
-
-function sanitizeHistoricalDecision(parsed: any, fallback: any) {
-  return {
-    title: parsed?.title || fallback.title,
-    historicalWindowLabel:
-      parsed?.historicalWindowLabel || fallback.historicalWindowLabel,
-    currentWaterQualityStatus:
-      parsed?.currentWaterQualityStatus || fallback.currentWaterQualityStatus,
-    pollutionRiskLevel:
-      parsed?.pollutionRiskLevel || fallback.pollutionRiskLevel,
-    confidenceScore: normalizeConfidence(
-      parsed?.confidenceScore,
-      fallback.confidenceScore
-    ),
-    executiveSummary: parsed?.executiveSummary || fallback.executiveSummary,
-    periodOverview: parsed?.periodOverview || fallback.periodOverview,
-    recommendedAction: parsed?.recommendedAction || fallback.recommendedAction,
-    recommendations: Array.isArray(parsed?.recommendations)
-      ? parsed.recommendations
-      : fallback.recommendations,
-    mainContributorSummary:
-      parsed?.mainContributorSummary || fallback.mainContributorSummary,
-    predictedSourceOfPollution:
-      parsed?.predictedSourceOfPollution || fallback.predictedSourceOfPollution,
-    sourceRationale: parsed?.sourceRationale || fallback.sourceRationale,
-    dominantDrivers: Array.isArray(parsed?.dominantDrivers)
-      ? parsed.dominantDrivers
-      : fallback.dominantDrivers,
-    likelySources: Array.isArray(parsed?.likelySources)
-      ? parsed.likelySources
-      : fallback.likelySources,
-    anomalyNotes: Array.isArray(parsed?.anomalyNotes)
-      ? parsed.anomalyNotes
-      : fallback.anomalyNotes,
-  };
-}
-
-function sanitizeExpandedHistorical(parsed: any, fallback: any) {
-  return {
-    overallNarrative: parsed?.overallNarrative || fallback.overallNarrative,
-    predictionTitle: parsed?.predictionTitle || fallback.predictionTitle,
-    predictionDetail: parsed?.predictionDetail || fallback.predictionDetail,
-    interpretationTitle:
-      parsed?.interpretationTitle || fallback.interpretationTitle,
-    interpretationDetail:
-      parsed?.interpretationDetail || fallback.interpretationDetail,
-    sourceTitle: parsed?.sourceTitle || fallback.sourceTitle,
-    sourceDetail: parsed?.sourceDetail || fallback.sourceDetail,
-    confidenceTitle: parsed?.confidenceTitle || fallback.confidenceTitle,
-    confidenceDetail: parsed?.confidenceDetail || fallback.confidenceDetail,
-    recommendationTitle:
-      parsed?.recommendationTitle || fallback.recommendationTitle,
-    recommendationDetail:
-      parsed?.recommendationDetail || fallback.recommendationDetail,
-    driverNarrative: parsed?.driverNarrative || fallback.driverNarrative,
-    anomalyNarrative: parsed?.anomalyNarrative || fallback.anomalyNarrative,
-    monthlyPatternNarrative:
-      parsed?.monthlyPatternNarrative || fallback.monthlyPatternNarrative,
-  };
-}
-
-async function callOpenAI(messages: ChatMessage[], maxTokens = 1800) {
-  const res = await openaiClient.chat.completions.create({
+async function generateJsonFromOpenAI(systemPrompt: string, userPrompt: string) {
+  const completion = await openaiClient.chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0.2,
-    max_tokens: maxTokens,
     response_format: { type: "json_object" },
-    messages,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
   });
 
-  return res.choices?.[0]?.message?.content?.trim() || "{}";
-}
-
-async function callDeepSeek(messages: ChatMessage[], maxTokens = 1800) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-
-  if (!apiKey) {
-    throw new Error("Missing DEEPSEEK_API_KEY");
-  }
-
-  const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      max_tokens: maxTokens,
-      messages,
-    }),
-  });
-
-  const raw = await res.text();
-
-  if (!res.ok) {
-    const detail = safeJsonParse(raw) || raw;
-    throw new Error(
-      typeof detail === "string"
-        ? `DeepSeek API failed: ${detail}`
-        : "DeepSeek API failed"
-    );
-  }
-
-  const data = safeJsonParse(raw);
-  return data?.choices?.[0]?.message?.content?.trim() || "{}";
-}
-
-async function runProvider(params: {
-  provider: string;
-  systemPrompt: string;
-  userPrompt: string;
-  maxTokens?: number;
-}) {
-  const { provider, systemPrompt, userPrompt, maxTokens = 1800 } = params;
-
-  const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userPrompt },
-  ];
-
-  if (provider === "openai") {
-    return callOpenAI(messages, maxTokens);
-  }
-
-  if (provider === "deepseek") {
-    return callDeepSeek(messages, maxTokens);
-  }
-
-  throw new Error("Invalid provider");
+  const raw = completion.choices?.[0]?.message?.content || "{}";
+  return safeJsonParse(stripCodeFence(raw));
 }
 
 export async function POST(req: NextRequest) {
@@ -534,304 +278,311 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     const {
-      provider = "openai",
-      mode = "historical_decision_30d",
+      mode = "general_decision",
       latestRow,
-      rows,
+      rows = [],
       aiInsight,
       aiDecision,
       nwqsSummary,
       historicalSummary,
-      historicalWindowDays = 30,
-    } = body;
+      historicalWindowDays = 7,
+    } = body || {};
 
-    const safeRows = Array.isArray(rows) ? rows.slice(0, 500) : [];
-
-    if (!latestRow && safeRows.length === 0) {
+    if (!Array.isArray(rows)) {
       return NextResponse.json(
-        { error: "Missing latestRow or rows" },
-        { status: 400 }
+        { error: "Invalid rows payload." },
+        { status: 400 },
       );
     }
 
     if (mode === "quick_insight") {
-      const fallback = buildQuickInsightFallback({
-        aiInsight,
-        nwqsSummary,
-      });
-
       const systemPrompt = `
-You are an environmental AI analyst for a river water quality dashboard.
+You are an environmental monitoring assistant.
 
-Your task is to generate a brief AI insight for the Latest Snapshot section.
-
+Write one short and useful snapshot insight.
 Rules:
-- Write one short paragraph only.
-- Write 2 to 4 sentences.
-- Keep it concise but still informative.
-- Mention the current condition and likely main drivers when supported.
-- Avoid scientific overclaim.
-- Do not invent unsupported numeric values.
-- Do not return bullet points.
-- Return valid JSON only.
-- Do not include markdown fences.
-`;
-
-      const userPayload = {
-        latestRow: latestRow || null,
-        recentRows: safeRows.slice(0, 60),
-        nwqsSummary: nwqsSummary || null,
-        aiInsight: aiInsight || null,
-        outputFormat: {
-          insight: "string",
-        },
-      };
+- Maximum 2 sentences.
+- Mention the class if available.
+- Mention only the most important contributors.
+- Do not be generic.
+- Do not use markdown.
+- Return JSON only:
+{
+  "insight": "..."
+}
+      `.trim();
 
       const userPrompt = `
-Generate a brief AI insight in valid JSON with exactly this key:
-- insight
+Latest row:
+${JSON.stringify(latestRow, null, 2)}
 
-Requirements:
-- 2 to 4 sentences
-- one paragraph only
-- concise but not too short
-- suitable for dashboard display
-- professional and readable
-- return only valid JSON
+AI insight:
+${JSON.stringify(aiInsight, null, 2)}
 
-Input:
-${JSON.stringify(userPayload, null, 2)}
-`;
+NWQS summary:
+${JSON.stringify(nwqsSummary, null, 2)}
+      `.trim();
 
-      const content = await runProvider({
-        provider,
-        systemPrompt,
-        userPrompt,
-        maxTokens: 320,
+      const result = await generateJsonFromOpenAI(systemPrompt, userPrompt);
+
+      return NextResponse.json({
+        insight:
+          compactText(result?.insight) ||
+          buildQuickInsightFallback(aiInsight, nwqsSummary),
       });
-
-      const parsed = safeJsonParse(stripCodeFence(content));
-      const sanitized = sanitizeQuickInsight(parsed, fallback);
-
-      return NextResponse.json(sanitized);
     }
 
-    if (mode === "historical_decision_30d") {
-      const fallback = buildHistoricalDecisionFallback({
-        latestRow,
-        historicalSummary,
-        nwqsSummary,
-      });
-
+    if (mode === "historical_decision_7d") {
       const systemPrompt = `
-You are an environmental AI analyst for river water quality monitoring.
+You are an environmental monitoring assistant for river water quality.
 
-Your task is to generate a detailed but concise AI decision summary for a dashboard panel.
-This panel MUST be based on the historical pattern over the last 30 days, not only the latest snapshot.
-
+Generate a concise 7-day AI decision card.
 Rules:
-- Treat the result as 30-day historical decision support.
-- Mention the main influencing parameters with concrete numeric values when available.
-- Mention what likely drives the pollution pattern across the month.
-- Predicted Source of Pollution must remain a likely hypothesis, not a confirmed fact.
-- Recommendations must be practical and operational.
-- Confidence Score must be an integer from 0 to 100.
-- Do not invent unsupported values.
-- Do not write vague generic summary if numeric evidence is available.
-- Return valid JSON only.
-- Do not include markdown fences.
-`;
-
-      const userPayload = {
-        historicalWindowDays,
-        latestRow: latestRow || null,
-        historicalRows: safeRows,
-        historicalSummary: historicalSummary || null,
-        nwqsSummary: nwqsSummary || null,
-        outputFormat: {
-          title: "string",
-          historicalWindowLabel: "string",
-          currentWaterQualityStatus: "string",
-          pollutionRiskLevel: "string",
-          confidenceScore: "number",
-          executiveSummary: "string",
-          periodOverview: "string",
-          recommendedAction: "string",
-          recommendations: ["string"],
-          mainContributorSummary: "string",
-          predictedSourceOfPollution: "string",
-          sourceRationale: "string",
-          dominantDrivers: [
-            {
-              label: "string",
-              latest: "number|null",
-              average: "number|null",
-              maximum: "number|null",
-              exceedanceRate: "number|null",
-              direction: "string",
-              likelyImpact: "string",
-            },
-          ],
-          likelySources: [
-            {
-              source: "string",
-              confidence: "number",
-              reason: "string",
-            },
-          ],
-          anomalyNotes: ["string"],
-        },
-      };
+- Use ONLY the provided 7-day historical evidence.
+- Focus on repeated abnormal parameters, not a single spike.
+- Mention numeric evidence for the strongest drivers.
+- executiveSummary must be 2-3 short sentences only.
+- recommendedAction must be 1 sentence only.
+- mainContributorSummary must be short.
+- predictedSourceOfPollution must be short and direct.
+- sourceRationale must be 1 sentence.
+- Return valid JSON only:
+{
+  "title": "7-Day AI Decision Support",
+  "historicalWindowLabel": "Last 7 days",
+  "currentWaterQualityStatus": "Class V",
+  "pollutionRiskLevel": "Critical",
+  "confidenceScore": 84,
+  "executiveSummary": "...",
+  "recommendedAction": "...",
+  "recommendations": ["...", "..."],
+  "mainContributorSummary": "...",
+  "predictedSourceOfPollution": "...",
+  "sourceRationale": "...",
+  "dominantDrivers": [],
+  "likelySources": [],
+  "anomalyNotes": []
+}
+      `.trim();
 
       const userPrompt = `
-Generate a 30-day AI Decision Support response in valid JSON with exactly these keys:
-- title
-- historicalWindowLabel
-- currentWaterQualityStatus
-- pollutionRiskLevel
-- confidenceScore
-- executiveSummary
-- periodOverview
-- recommendedAction
-- recommendations
-- mainContributorSummary
-- predictedSourceOfPollution
-- sourceRationale
-- dominantDrivers
-- likelySources
-- anomalyNotes
+Latest row:
+${JSON.stringify(latestRow, null, 2)}
 
-Requirements:
-- executiveSummary: 3 to 5 sentences
-- periodOverview: 2 to 4 sentences
-- mainContributorSummary: mention the strongest parameters with numbers when available
-- predictedSourceOfPollution: a plausible hypothesis such as domestic wastewater, industrial discharge, runoff, agriculture, sediment, or mixed-source
-- sourceRationale: explain why that source is suspected
-- dominantDrivers: preserve concrete numbers where available
-- anomalyNotes: concise operational notes based on monthly pattern
-- return only valid JSON
+Historical summary:
+${JSON.stringify(historicalSummary, null, 2)}
 
-Input:
-${JSON.stringify(userPayload, null, 2)}
-`;
+NWQS summary:
+${JSON.stringify(nwqsSummary, null, 2)}
 
-      const content = await runProvider({
-        provider,
-        systemPrompt,
-        userPrompt,
-        maxTokens: 1800,
+Historical window days:
+${historicalWindowDays}
+
+Representative rows used:
+${rows.length}
+      `.trim();
+
+      const result = await generateJsonFromOpenAI(systemPrompt, userPrompt);
+
+      return NextResponse.json({
+        title: compactText(result?.title, "7-Day AI Decision Support"),
+        historicalWindowLabel: compactText(
+          result?.historicalWindowLabel,
+          `Last ${historicalWindowDays} days`,
+        ),
+        currentWaterQualityStatus: compactText(
+          result?.currentWaterQualityStatus,
+          nwqsSummary?.overallClass ? `Class ${nwqsSummary.overallClass}` : "Class V",
+        ),
+        pollutionRiskLevel: compactText(
+          result?.pollutionRiskLevel,
+          "Critical",
+        ),
+        confidenceScore: normalizeConfidence(
+          result?.confidenceScore,
+          historicalSummary?.confidenceScore ?? 82,
+        ),
+        executiveSummary: compactText(
+          result?.executiveSummary,
+          buildHistoricalExecutiveSummary(
+            historicalSummary,
+            nwqsSummary,
+            historicalWindowDays,
+          ),
+        ),
+        recommendedAction: compactText(
+          result?.recommendedAction,
+          buildRecommendedActionFallback(historicalSummary),
+        ),
+        recommendations: Array.isArray(result?.recommendations)
+          ? result.recommendations
+          : buildRecommendationListFallback(historicalSummary),
+        mainContributorSummary: compactText(
+          result?.mainContributorSummary,
+          buildMainContributorSummary(historicalSummary?.topDrivers || []),
+        ),
+        predictedSourceOfPollution: compactText(
+          result?.predictedSourceOfPollution,
+          historicalSummary?.primarySource?.source || "Potential mixed-source pollution",
+        ),
+        sourceRationale: compactText(
+          result?.sourceRationale,
+          historicalSummary?.primarySource?.reason ||
+            "The hypothesis is based on repeated abnormal parameter behaviour over the last 7 days.",
+        ),
+        dominantDrivers: Array.isArray(result?.dominantDrivers)
+          ? result.dominantDrivers
+          : historicalSummary?.topDrivers || [],
+        likelySources: Array.isArray(result?.likelySources)
+          ? result.likelySources
+          : historicalSummary?.sourceHypotheses || [],
+        anomalyNotes: Array.isArray(result?.anomalyNotes)
+          ? result.anomalyNotes
+          : historicalSummary?.anomalyNotes || [],
       });
-
-      const parsed = safeJsonParse(stripCodeFence(content));
-      const sanitized = sanitizeHistoricalDecision(parsed, fallback);
-
-      return NextResponse.json(sanitized);
     }
 
     if (mode === "expanded_historical_decision_detail") {
-      const fallback = buildExpandedHistoricalFallback({
-        aiDecision,
-        historicalSummary,
-        nwqsSummary,
-      });
-
       const systemPrompt = `
-You are an environmental AI analyst for river water quality monitoring.
+You are an environmental monitoring assistant generating a CLEAN and SHORT popup for 7-day river analysis.
 
-Your task is to expand a compact 30-day historical AI decision into a richer modal explanation.
+GOAL:
+The popup must be practical, numeric, and easy to scan.
 
-Rules:
-- This explanation MUST be grounded in the last 30 days of historical data.
-- Explain which parameters influenced the decision and include concrete numeric values when available.
-- Explain likely pollution-source hypotheses such as domestic wastewater, industrial activity, runoff, agriculture, sediment, or mixed-source pollution.
-- Keep source attribution as hypothesis, not proof.
-- Avoid vague generic wording when evidence is present.
-- Be detailed, practical, and readable for dashboard users.
-- Do not invent unsupported numbers.
-- Return valid JSON only.
-- Do not include markdown fences.
-`;
+ONLY TALK ABOUT:
+1. Which parameters are abnormal
+2. What numeric evidence supports that
+3. What the likely pollution source is
+4. What the recommended next action is
 
-      const userPayload = {
-        historicalWindowDays,
-        latestRow: latestRow || null,
-        historicalRows: safeRows,
-        aiDecision: aiDecision || null,
-        historicalSummary: historicalSummary || null,
-        nwqsSummary: nwqsSummary || null,
-        outputFormat: {
-          overallNarrative: "string",
-          predictionTitle: "string",
-          predictionDetail: "string",
-          interpretationTitle: "string",
-          interpretationDetail: "string",
-          sourceTitle: "string",
-          sourceDetail: "string",
-          confidenceTitle: "string",
-          confidenceDetail: "string",
-          recommendationTitle: "string",
-          recommendationDetail: "string",
-          driverNarrative: "string",
-          anomalyNarrative: "string",
-          monthlyPatternNarrative: "string",
-        },
-      };
+STRICT RULES:
+- Use ONLY the provided 7-day evidence
+- DO NOT mention 30-day or monthly analysis
+- DO NOT mention timestamp
+- DO NOT mention confidence score
+- DO NOT create generic explanations
+- DO NOT repeat the same number in every section
+- Focus only on the top 2 or 3 important parameters
+- Mention real values such as avg, latest, max, exceedance rate
+- Source must be hypothesis-style only: industrial or chemical discharge, domestic wastewater, agricultural runoff, livestock-related pollution, sediment runoff, or mixed-source pollution
+- Recommendation must be short, operational, and practical
+- overallNarrative: max 2 short sentences
+- predictionDetail: max 2 short sentences
+- sourceDetail: max 2 short sentences
+- recommendationDetail: max 2 short sentences
+- driverNarrative: short compact paragraph
+- anomalyNarrative: short compact paragraph
+- monthlyPatternNarrative: short compact paragraph
+- Even though the field name is monthlyPatternNarrative, it MUST still describe the 7-day pattern because frontend uses that field name
+
+Return valid JSON only:
+{
+  "overallNarrative": "...",
+  "predictionTitle": "7-Day Water Quality Summary",
+  "predictionDetail": "...",
+  "sourceTitle": "Likely Pollution Source",
+  "sourceDetail": "...",
+  "recommendationTitle": "Recommended Follow-up",
+  "recommendationDetail": "...",
+  "driverNarrative": "...",
+  "anomalyNarrative": "...",
+  "monthlyPatternNarrative": "..."
+}
+      `.trim();
+
+      const topDrivers: DriverSummary[] = historicalSummary?.topDrivers || [];
+      const sourceHypotheses: SourceHypothesis[] =
+        historicalSummary?.sourceHypotheses || [];
 
       const userPrompt = `
-Generate an expanded 30-day AI insight in valid JSON with exactly these keys:
-- overallNarrative
-- predictionTitle
-- predictionDetail
-- interpretationTitle
-- interpretationDetail
-- sourceTitle
-- sourceDetail
-- confidenceTitle
-- confidenceDetail
-- recommendationTitle
-- recommendationDetail
-- driverNarrative
-- anomalyNarrative
-- monthlyPatternNarrative
+7-day AI decision:
+${JSON.stringify(aiDecision, null, 2)}
 
-Requirements:
-- all explanations must refer to the last 30 days, not only the latest reading
-- predictionDetail: explain what the 30-day prediction means in practice
-- interpretationDetail: explain why the AI interprets the condition that way using monthly evidence
-- sourceDetail: describe likely pollution-source hypotheses and include why they are suspected
-- confidenceDetail: explain how to interpret the confidence
-- recommendationDetail: explain what actions should follow operationally
-- driverNarrative: clearly mention parameter names and numeric values where available
-- anomalyNarrative: summarise notable anomalies over the month
-- monthlyPatternNarrative: explain the broader one-month pollution pattern
-- each major detail should be about 3 to 6 sentences
-- return only valid JSON
+7-day historical summary:
+${JSON.stringify(
+  {
+    windowLabel: historicalSummary?.windowLabel,
+    recordCount: historicalSummary?.recordCount,
+    topDrivers: topDrivers.slice(0, 4),
+    primarySource: historicalSummary?.primarySource,
+    sourceHypotheses: sourceHypotheses.slice(0, 3),
+    anomalyNotes: historicalSummary?.anomalyNotes?.slice?.(0, 4) || [],
+  },
+  null,
+  2,
+)}
 
-Input:
-${JSON.stringify(userPayload, null, 2)}
-`;
+NWQS summary:
+${JSON.stringify(nwqsSummary, null, 2)}
 
-      const content = await runProvider({
-        provider,
-        systemPrompt,
-        userPrompt,
-        maxTokens: 2200,
+Latest row:
+${JSON.stringify(latestRow, null, 2)}
+
+Representative hourly rows used:
+${rows.length}
+      `.trim();
+
+      const result = await generateJsonFromOpenAI(systemPrompt, userPrompt);
+      const fallback = buildExpandedFallback(
+        historicalSummary,
+        aiDecision,
+        nwqsSummary,
+        historicalWindowDays,
+      );
+
+      return NextResponse.json({
+        overallNarrative: compactText(
+          result?.overallNarrative,
+          fallback.overallNarrative,
+        ),
+        predictionTitle: compactText(
+          result?.predictionTitle,
+          fallback.predictionTitle,
+        ),
+        predictionDetail: compactText(
+          result?.predictionDetail,
+          fallback.predictionDetail,
+        ),
+        sourceTitle: compactText(
+          result?.sourceTitle,
+          fallback.sourceTitle,
+        ),
+        sourceDetail: compactText(
+          result?.sourceDetail,
+          fallback.sourceDetail,
+        ),
+        recommendationTitle: compactText(
+          result?.recommendationTitle,
+          fallback.recommendationTitle,
+        ),
+        recommendationDetail: compactText(
+          result?.recommendationDetail,
+          fallback.recommendationDetail,
+        ),
+        driverNarrative: compactText(
+          result?.driverNarrative,
+          fallback.driverNarrative,
+        ),
+        anomalyNarrative: compactText(
+          result?.anomalyNarrative,
+          fallback.anomalyNarrative,
+        ),
+        monthlyPatternNarrative: compactText(
+          result?.monthlyPatternNarrative,
+          fallback.monthlyPatternNarrative,
+        ),
       });
-
-      const parsed = safeJsonParse(stripCodeFence(content));
-      const sanitized = sanitizeExpandedHistorical(parsed, fallback);
-
-      return NextResponse.json(sanitized);
     }
 
-    return NextResponse.json(
-      { error: `Invalid mode: ${String(mode)}` },
-      { status: 400 }
-    );
+    return NextResponse.json({});
   } catch (error: any) {
+    console.error("OpenAI route error:", error);
+
     return NextResponse.json(
-      { error: error?.message || "Unknown server error" },
-      { status: 500 }
+      {
+        error: error?.message || "Failed to process OpenAI request.",
+      },
+      { status: 500 },
     );
   }
 }
