@@ -18,7 +18,7 @@ const UserManualFlipbook = dynamic(
 const PDF_PATH = "/docs/iSENS-Air-MANUAL-BOOK.pdf";
 
 export default function UserManualPage() {
-  const [viewMode, setViewMode] = useState<"flipbook" | "pdf">("pdf");
+  const [viewMode, setViewMode] = useState<"flipbook" | "pdf">("flipbook");
 
   return (
     <main className="min-h-screen bg-white">
