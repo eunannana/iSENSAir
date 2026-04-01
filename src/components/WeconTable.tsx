@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Visualizations from "@/components/Visualizations";
-import OpenAIPanel from "@/components/openAIPanel";
 import LoadingScreen from "@/components/LoadingScreen";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { getNWQSResult } from "@/lib/nwqs";
+import { getAIInsightSummary } from "@/lib/aiInsights";
 import {
   fetchLatestData,
   fetchDataByDateRange,
@@ -17,6 +18,41 @@ type Props = {
   initialArea: string;
 };
 
+type AIDecisionResponse = {
+  currentWaterQualityStatus: string;
+  pollutionRiskLevel: string;
+  predictedSourceOfPollution: string;
+  confidenceScore: number;
+  recommendedAction: string;
+  executiveSummary: string;
+};
+
+type DetailedInsightResponse = {
+  overallNarrative?: string;
+  predictionTitle?: string;
+  predictionDetail?: string;
+  interpretationTitle?: string;
+  interpretationDetail?: string;
+  sourceTitle?: string;
+  sourceDetail?: string;
+  confidenceTitle?: string;
+  confidenceDetail?: string;
+  recommendationTitle?: string;
+  recommendationDetail?: string;
+};
+
+const SENSOR_KEYS = [
+  "Tr_Sensor",
+  "BOD_Sensor",
+  "DO_Sensor",
+  "COD_Sensor",
+  "NH_Sensor",
+  "TDS_Sensor",
+  "CT_Sensor",
+  "ORP_Sensor",
+  "pH_Sensor",
+] as const;
+
 export default function WeconTable({ initialArea }: Props) {
   const area = initialArea;
 
@@ -25,33 +61,36 @@ export default function WeconTable({ initialArea }: Props) {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [loadingInitial, setLoadingInitial] = useState(true);
-  const [loadingStage, setLoadingStage] = useState<"connecting" | "booting" | "loading">("connecting");
+  const [loadingStage, setLoadingStage] = useState<
+    "connecting" | "booting" | "loading"
+  >("connecting");
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [loadingHistorical, setLoadingHistorical] = useState(false);
   const [sortAsc, setSortAsc] = useState(false);
-  const [showAI, setShowAI] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [refreshingLatest, setRefreshingLatest] = useState(false);
+
+  const [aiDecision, setAIDecision] = useState<AIDecisionResponse | null>(null);
+  const [loadingAIDecision, setLoadingAIDecision] = useState(false);
+  const [aiDecisionError, setAIDecisionError] = useState<string | null>(null);
+
+  const [showVisualization, setShowVisualization] = useState(false);
+  const [showHistoricalTable, setShowHistoricalTable] = useState(false);
+
+  const [showInsightModal, setShowInsightModal] = useState(false);
+  const [loadingDetailedInsight, setLoadingDetailedInsight] = useState(false);
+  const [detailedInsightError, setDetailedInsightError] = useState<string | null>(
+    null
+  );
+  const [detailedInsight, setDetailedInsight] =
+    useState<DetailedInsightResponse | null>(null);
+
   const rowsPerPage = 25;
 
-  const sensorKeys = [
-    "Tr_Sensor",
-    "BOD_Sensor",
-    "DO_Sensor",
-    "COD_Sensor",
-    "NH_Sensor",
-    "TDS_Sensor",
-    "CT_Sensor",
-    "ORP_Sensor",
-    "pH_Sensor",
-  ];
-
-  // Fungsi untuk check apakah record punya minimal satu sensor value yang meaningful
   function hasValidSensorData(record: any): boolean {
-    return sensorKeys.some((key) => {
+    return SENSOR_KEYS.some((key) => {
       const val = record[key];
-      // Check apakah value adalah meaningful (bukan null, undefined, empty string, 0, atau NaN)
       return (
         val !== null &&
         val !== undefined &&
@@ -62,12 +101,12 @@ export default function WeconTable({ initialArea }: Props) {
     });
   }
 
-  // Fungsi untuk round angka ke 2 desimal
   function roundValue(value: any): string {
     if (value === null || value === undefined || value === "") return "-";
     const num = parseFloat(value);
     return isNaN(num) ? "-" : num.toFixed(2);
   }
+
   function formatDisplayDate(dateStr: string) {
     if (!dateStr) return "-";
     const date = new Date(dateStr);
@@ -76,13 +115,11 @@ export default function WeconTable({ initialArea }: Props) {
     const year = date.getFullYear();
     return `${day}/${month}/${year}`;
   }
-  /* ================= FORMAT DISPLAY DATE ================= */
 
   function formatDisplayDateTime(ts: string) {
     if (!ts) return "-";
 
     const date = new Date(ts);
-
     const day = String(date.getDate()).padStart(2, "0");
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const year = date.getFullYear();
@@ -94,17 +131,13 @@ export default function WeconTable({ initialArea }: Props) {
     return `${day}/${month}/${year}, ${hour}:${minute}:${second}`;
   }
 
-  /* ================= TIMESTAMP ================= */
-
   function parseTimestamp(ts: string) {
     if (!ts) return 0;
 
-    // Handle ISO format: "2026-03-01T01:47:18"
     if (ts.includes("T")) {
       return new Date(ts).getTime();
     }
 
-    // Handle old format: "01/03/2026, 01:47:18" or "01/03/2026 01:47:18"
     const [datePart, timePart] = ts.includes(",")
       ? ts.split(",").map((s) => s.trim())
       : ts.split(" ");
@@ -120,11 +153,64 @@ export default function WeconTable({ initialArea }: Props) {
       Number(day),
       timeArray[0] || 0,
       timeArray[1] || 0,
-      timeArray[2] || 0,
+      timeArray[2] || 0
     ).getTime();
   }
 
-  /* ================= FETCH ================= */
+  function getRiskBadgeClass(riskLevel: string) {
+    switch (riskLevel) {
+      case "Low":
+        return "bg-emerald-100 text-emerald-700 border-emerald-200";
+      case "Moderate":
+        return "bg-yellow-100 text-yellow-700 border-yellow-200";
+      case "High":
+        return "bg-orange-100 text-orange-700 border-orange-200";
+      case "Critical":
+        return "bg-red-100 text-red-700 border-red-200";
+      default:
+        return "bg-gray-100 text-gray-600 border-gray-200";
+    }
+  }
+
+  function getHeroStyles(riskLevel: string) {
+    switch (riskLevel) {
+      case "Low":
+        return {
+          shell:
+            "border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-teal-50",
+          accent: "bg-emerald-500",
+          ring: "ring-emerald-100",
+        };
+      case "Moderate":
+        return {
+          shell:
+            "border-yellow-200 bg-gradient-to-br from-yellow-50 via-white to-amber-50",
+          accent: "bg-yellow-500",
+          ring: "ring-yellow-100",
+        };
+      case "High":
+        return {
+          shell:
+            "border-orange-200 bg-gradient-to-br from-orange-50 via-white to-amber-50",
+          accent: "bg-orange-500",
+          ring: "ring-orange-100",
+        };
+      case "Critical":
+        return {
+          shell:
+            "border-red-200 bg-gradient-to-br from-red-50 via-white to-rose-50",
+          accent: "bg-red-500",
+          ring: "ring-red-100",
+        };
+      default:
+        return {
+          shell:
+            "border-gray-200 bg-gradient-to-br from-gray-50 via-white to-slate-50",
+          accent: "bg-gray-500",
+          ring: "ring-gray-100",
+        };
+    }
+  }
 
   async function fetchHistorical(fetchStart: string, fetchEnd: string) {
     if (!fetchStart || !fetchEnd) return;
@@ -142,7 +228,7 @@ export default function WeconTable({ initialArea }: Props) {
 
       setData(arr);
       setCurrentPage(1);
-    } catch (error: any) {
+    } catch {
       setErrorMsg("Failed to load historical data");
       setData([]);
     } finally {
@@ -153,7 +239,6 @@ export default function WeconTable({ initialArea }: Props) {
   async function fetchLatestSnapshot() {
     try {
       setRefreshingLatest(true);
-
       const latestRecord = await fetchLatestData(area);
 
       if (latestRecord && typeof latestRecord === "object") {
@@ -168,7 +253,151 @@ export default function WeconTable({ initialArea }: Props) {
     }
   }
 
-  /* ================= FIRST LOAD ================= */
+  async function generateAIDecisionPanel(
+    latestRowParam: any,
+    sortedDataParam: any[],
+    aiInsightParam: any
+  ) {
+    if (!latestRowParam) return;
+
+    setLoadingAIDecision(true);
+    setAIDecisionError(null);
+
+    try {
+      const res = await fetch("/api/openai", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "openai",
+          mode: "decision_summary",
+          latestRow: latestRowParam,
+          rows: sortedDataParam.slice(0, 100),
+          aiInsight: aiInsightParam,
+          nwqsSummary: {
+            overallClass: aiInsightParam.overallClass,
+            overallStatus: aiInsightParam.riskLevel,
+            dominantParameters: aiInsightParam.dominantParameters,
+            useRecommendation:
+              aiInsightParam.recommendations?.[0] ||
+              "Continue routine monitoring.",
+            lastUpdated: latestRowParam?.Timestamp,
+          },
+        }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result?.error || "Failed to generate AI decision.");
+      }
+
+      setAIDecision(result);
+    } catch (error: any) {
+      setAIDecisionError(
+        error?.message || "Failed to generate AI decision panel."
+      );
+      setAIDecision(null);
+    } finally {
+      setLoadingAIDecision(false);
+    }
+  }
+
+  async function handleGetMoreAIInsight() {
+    if (!latestRow) return;
+
+    setShowInsightModal(true);
+    setLoadingDetailedInsight(true);
+    setDetailedInsightError(null);
+
+    try {
+      const res = await fetch("/api/openai", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "openai",
+          mode: "expanded_decision_detail",
+          latestRow,
+          rows: sortedData.slice(0, 150),
+          aiInsight,
+          aiDecision,
+          nwqsSummary: {
+            overallClass: aiInsight.overallClass,
+            overallStatus: aiDecision?.pollutionRiskLevel || aiInsight.riskLevel,
+            dominantParameters: aiInsight.dominantParameters,
+            recommendations: aiInsight.recommendations || [],
+            anomalies: aiInsight.anomalies || [],
+            trendSummary: aiInsight.trendSummary || [],
+            lastUpdated: latestRow?.Timestamp,
+          },
+        }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(
+          result?.error || "Failed to generate expanded AI insight."
+        );
+      }
+
+      const fallbackPrediction = `${
+        aiDecision?.currentWaterQualityStatus || `Class ${aiInsight.overallClass}`
+      } is the predicted current water quality condition based on the latest sensor readings and recent historical trend pattern. This classification indicates that the river is currently operating under a degraded condition and requires closer attention from monitoring personnel.`;
+
+      const fallbackInterpretation =
+        aiDecision?.executiveSummary ||
+        `The current water quality condition is interpreted as ${
+          aiDecision?.pollutionRiskLevel || aiInsight.riskLevel
+        }. This interpretation is supported by the dominance of ${
+          aiInsight.dominantParameters?.length
+            ? aiInsight.dominantParameters.join(", ")
+            : "multiple critical parameters"
+        }, together with recent anomaly signals and trend movement.`;
+
+      const fallbackSource = `${
+        aiDecision?.predictedSourceOfPollution || getPredictedSource(aiInsight)
+      }. This hypothesis is derived from the pattern of elevated organic load, ammonia-related stress, conductivity or turbidity shifts, and supporting anomaly indicators.`;
+
+      const fallbackConfidence = `The confidence score of ${
+        aiDecision?.confidenceScore || Math.min(95, Math.max(60, aiInsight.riskScore))
+      }% indicates the model has reasonably strong certainty in its present assessment. This should still be interpreted alongside field validation and operational judgement.`;
+
+      const fallbackRecommendation = `${
+        aiDecision?.recommendedAction ||
+        aiInsight.recommendations?.[0] ||
+        "Continue routine monitoring."
+      } This recommendation is prioritised because the current signal pattern suggests elevated environmental risk and should be followed by verification in the field.`;
+
+      setDetailedInsight({
+        overallNarrative:
+          result?.overallNarrative ||
+          `This expanded AI insight provides a more detailed explanation of the current river condition by elaborating the prediction, interpretation, possible pollution source, confidence level, and operational recommendation.`,
+        predictionTitle: result?.predictionTitle || "AI Prediction",
+        predictionDetail: result?.predictionDetail || fallbackPrediction,
+        interpretationTitle: result?.interpretationTitle || "AI Interpretation",
+        interpretationDetail:
+          result?.interpretationDetail || fallbackInterpretation,
+        sourceTitle: result?.sourceTitle || "Predicted Source of Pollution",
+        sourceDetail: result?.sourceDetail || fallbackSource,
+        confidenceTitle: result?.confidenceTitle || "AI Confidence",
+        confidenceDetail: result?.confidenceDetail || fallbackConfidence,
+        recommendationTitle: result?.recommendationTitle || "AI Recommendation",
+        recommendationDetail:
+          result?.recommendationDetail || fallbackRecommendation,
+      });
+    } catch (error: any) {
+      setDetailedInsightError(
+        error?.message || "Failed to generate more detailed AI insight."
+      );
+      setDetailedInsight(null);
+    } finally {
+      setLoadingDetailedInsight(false);
+    }
+  }
 
   useEffect(() => {
     const today = new Date().toISOString().split("T")[0];
@@ -179,9 +408,15 @@ export default function WeconTable({ initialArea }: Props) {
     setErrorMsg(null);
     setLoadingStage("connecting");
     setRetryAttempt(0);
+    setDetailedInsight(null);
+    setDetailedInsightError(null);
+    setShowInsightModal(false);
 
-    // Set up retry callback untuk menangkap status API booting
-    const handleRetry = (attempt: number, totalRetries: number, isBootingError: boolean) => {
+    const handleRetry = (
+      attempt: number,
+      _totalRetries: number,
+      isBootingError: boolean
+    ) => {
       setRetryAttempt(attempt);
       if (isBootingError) {
         setLoadingStage("booting");
@@ -198,25 +433,19 @@ export default function WeconTable({ initialArea }: Props) {
         await validateLocation(area);
 
         setLoadingStage("loading");
-        await Promise.all([
-          fetchHistorical(today, today),
-          fetchLatestSnapshot(),
-        ]);
-      } catch (error: any) {
+        await Promise.all([fetchHistorical(today, today), fetchLatestSnapshot()]);
+      } catch {
         setErrorMsg("Failed to load initial data");
       } finally {
         setLoadingInitial(false);
-        setRetryCallback(null); // Clean up callback
+        setRetryCallback(null);
       }
     }
 
     loadInitial();
   }, [area]);
 
-  /* ================= AUTO REFRESH LATEST ================= */
-
   useEffect(() => {
-    // run a refresh every minute; if the tab is hidden we skip the call
     const interval = setInterval(() => {
       if (document.hidden) return;
       fetchLatestSnapshot();
@@ -225,10 +454,27 @@ export default function WeconTable({ initialArea }: Props) {
     return () => clearInterval(interval);
   }, [area]);
 
-  /* ================= SORT & FILTER ================= */
+  useEffect(() => {
+    function handleKeydown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setShowInsightModal(false);
+      }
+    }
+
+    if (showInsightModal) {
+      document.body.style.overflow = "hidden";
+      window.addEventListener("keydown", handleKeydown);
+    } else {
+      document.body.style.overflow = "";
+    }
+
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [showInsightModal]);
 
   const sortedData = useMemo(() => {
-    // Filter data yang kosong, hanya yang ada sensor values
     const filtered = [...data].filter(hasValidSensorData);
 
     return filtered.sort((a, b) => {
@@ -238,17 +484,49 @@ export default function WeconTable({ initialArea }: Props) {
     });
   }, [data, sortAsc]);
 
-  /* ================= LATEST ROW ================= */
-
   const latestRow = useMemo(() => {
     return latestData.length ? latestData[0] : null;
   }, [latestData]);
+
+  const aiInsight = useMemo(() => {
+    return getAIInsightSummary(latestRow, sortedData);
+  }, [latestRow, sortedData]);
+
+  const confidencePercentage = useMemo(() => {
+    if (aiDecision?.confidenceScore) return aiDecision.confidenceScore;
+    return Math.min(95, Math.max(60, aiInsight.riskScore));
+  }, [aiDecision?.confidenceScore, aiInsight.riskScore]);
+
+  const likelyContributor = useMemo(() => {
+    return aiInsight.dominantParameters.length > 0
+      ? aiInsight.dominantParameters.join(", ")
+      : "Not identified";
+  }, [aiInsight.dominantParameters]);
+
+  const exceedanceIndicators = useMemo(() => {
+    if (!latestRow) return [];
+
+    return SENSOR_KEYS.map((key) => getNWQSResult(key as any, latestRow[key]))
+      .filter((item) => item.className === "IV" || item.className === "V")
+      .slice(0, 6);
+  }, [latestRow]);
+
+  const keyTrendItems = useMemo(() => {
+    return aiInsight.trendSummary
+      .filter(
+        (item: any) =>
+          item.direction === "increasing" ||
+          item.direction === "decreasing" ||
+          item.direction === "fluctuating"
+      )
+      .slice(0, 5);
+  }, [aiInsight.trendSummary]);
 
   const totalPages = Math.ceil(sortedData.length / rowsPerPage);
 
   const paginatedData = sortedData.slice(
     (currentPage - 1) * rowsPerPage,
-    currentPage * rowsPerPage,
+    currentPage * rowsPerPage
   );
 
   const schema = useMemo(() => {
@@ -261,12 +539,15 @@ export default function WeconTable({ initialArea }: Props) {
     return obj;
   }, [sortedData]);
 
-  /* ================= EXPORT PDF ================= */
+  useEffect(() => {
+    if (latestRow && sortedData.length > 0) {
+      generateAIDecisionPanel(latestRow, sortedData, aiInsight);
+    }
+  }, [latestRow, sortedData, aiInsight]);
 
   const handleExportPDF = () => {
     const pdf = new jsPDF("p", "mm", "a4");
 
-    /* ===== HEADER ===== */
     pdf.setFontSize(16);
     pdf.text("iSENS-AIR River Monitoring Report", 105, 15, {
       align: "center",
@@ -277,12 +558,11 @@ export default function WeconTable({ initialArea }: Props) {
       `Area: ${area} | Generated: ${new Date().toLocaleString()}`,
       105,
       22,
-      { align: "center" },
+      { align: "center" }
     );
 
     let currentY = 30;
 
-    /* ===== SNAPSHOT ===== */
     if (latestRow) {
       pdf.setFontSize(12);
       pdf.text("Latest Snapshot", 14, currentY);
@@ -291,43 +571,36 @@ export default function WeconTable({ initialArea }: Props) {
       autoTable(pdf, {
         startY: currentY,
         head: [["Parameter", "Value"]],
-        body: sensorKeys.map((k) => [k, roundValue(latestRow[k])]),
+        body: SENSOR_KEYS.map((k) => [k, roundValue(latestRow[k])]),
         styles: { fontSize: 9 },
         theme: "grid",
       });
-
-      currentY = (pdf as any).lastAutoTable.finalY + 10;
     }
 
-    /* ===== TREND GRAPH ===== */
     const canvas = document.querySelector("canvas");
 
     if (canvas) {
       pdf.addPage();
-
       pdf.setFontSize(12);
       pdf.text("Trend Visualization", 14, 15);
 
       const chartImage = canvas.toDataURL("image/png");
-
       pdf.addImage(chartImage, "PNG", 10, 20, 190, 100);
     }
 
-    /* ===== HISTORICAL TABLE ===== */
     if (sortedData.length > 0) {
       pdf.addPage();
-
       pdf.setFontSize(12);
       pdf.text("Historical Data", 14, 15);
 
       const tableBody = sortedData.map((row) => [
         row.Timestamp,
-        ...sensorKeys.map((k) => roundValue(row[k])),
+        ...SENSOR_KEYS.map((k) => roundValue(row[k])),
       ]);
 
       autoTable(pdf, {
         startY: 20,
-        head: [["Timestamp", ...sensorKeys]],
+        head: [["Timestamp", ...SENSOR_KEYS]],
         body: tableBody,
         styles: { fontSize: 6 },
         theme: "grid",
@@ -337,10 +610,6 @@ export default function WeconTable({ initialArea }: Props) {
 
     pdf.save(`iSENS-AIR-${area}-report.pdf`);
   };
-
-  /* ================= PAGINATION ================= */
-
-  /* ================= SMART PAGINATION ================= */
 
   function renderPagination() {
     if (totalPages <= 1) return null;
@@ -359,22 +628,20 @@ export default function WeconTable({ initialArea }: Props) {
     }
 
     return (
-      <div className="flex items-center justify-center gap-2 mt-6 flex-wrap">
-        {/* PREV */}
+      <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
         <button
           disabled={currentPage === 1}
           onClick={() => setCurrentPage((p) => p - 1)}
-          className="px-3 py-1 border rounded disabled:opacity-40"
+          className="rounded-lg border px-3 py-1 disabled:opacity-40"
         >
           Prev
         </button>
 
-        {/* FIRST + DOTS */}
         {startPage > 1 && (
           <>
             <button
               onClick={() => setCurrentPage(1)}
-              className="px-3 py-1 border rounded"
+              className="rounded-lg border px-3 py-1"
             >
               1
             </button>
@@ -382,12 +649,11 @@ export default function WeconTable({ initialArea }: Props) {
           </>
         )}
 
-        {/* MAIN PAGES */}
         {pages.map((page) => (
           <button
             key={page}
             onClick={() => setCurrentPage(page)}
-            className={`px-3 py-1 rounded ${
+            className={`rounded-lg px-3 py-1 ${
               currentPage === page ? "bg-blue-600 text-white" : "border"
             }`}
           >
@@ -395,24 +661,22 @@ export default function WeconTable({ initialArea }: Props) {
           </button>
         ))}
 
-        {/* LAST + DOTS */}
         {endPage < totalPages && (
           <>
             {endPage < totalPages - 1 && <span className="px-2">...</span>}
             <button
               onClick={() => setCurrentPage(totalPages)}
-              className="px-3 py-1 border rounded"
+              className="rounded-lg border px-3 py-1"
             >
               {totalPages}
             </button>
           </>
         )}
 
-        {/* NEXT */}
         <button
           disabled={currentPage === totalPages}
           onClick={() => setCurrentPage((p) => p + 1)}
-          className="px-3 py-1 border rounded disabled:opacity-40"
+          className="rounded-lg border px-3 py-1 disabled:opacity-40"
         >
           Next
         </button>
@@ -420,12 +684,14 @@ export default function WeconTable({ initialArea }: Props) {
     );
   }
 
-  /* ================= UI ================= */
+  const activeRiskLevel =
+    aiDecision?.pollutionRiskLevel || aiInsight.riskLevel || "Moderate";
+  const heroStyles = getHeroStyles(activeRiskLevel);
+
   return (
     <>
-      {/* Loading Screen Modal */}
-      <LoadingScreen 
-        isVisible={loadingInitial} 
+      <LoadingScreen
+        isVisible={loadingInitial}
         stage={loadingStage}
         message={
           loadingStage === "booting"
@@ -435,203 +701,593 @@ export default function WeconTable({ initialArea }: Props) {
       />
 
       {loadingInitial ? null : (
-        <div className="mt-6 space-y-10">
-      {errorMsg && (
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="bg-red-100 text-red-800 p-3 rounded mb-4">
-            {errorMsg}
-          </div>
-        </div>
-      )}
-
-      {/* ===== LATEST SNAPSHOT ===== */}
-      {latestRow && (
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="border rounded-2xl p-6 bg-white">
-            {/* Header */}
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="font-semibold text-gray-800">Latest Snapshot</h2>
-
-              <span className="text-sm text-gray-500 whitespace-nowrap">
-                {formatDisplayDateTime(latestRow.Timestamp)}
-              </span>
+        <div className="mt-6 space-y-8">
+          {errorMsg && (
+            <div className="mx-auto max-w-6xl px-4">
+              <div className="mb-4 rounded-xl bg-red-100 p-3 text-red-800">
+                {errorMsg}
+              </div>
             </div>
+          )}
 
-            {/* Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {sensorKeys.map((key) => (
-                <DataCard
-                  key={key}
-                  sensorKey={key}
-                  value={latestRow[key]}
-                  roundValue={roundValue}
-                />
-              ))}
+          {latestRow && (
+            <div className="mx-auto max-w-6xl px-4">
+              <div
+                className={`overflow-hidden rounded-3xl border p-0 shadow-sm ring-4 ${heroStyles.shell} ${heroStyles.ring}`}
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_0.9fr]">
+                  <div className="p-6 md:p-8">
+                    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-1 text-xs font-medium text-gray-700 backdrop-blur">
+                          <span className={`h-2.5 w-2.5 rounded-full ${heroStyles.accent}`} />
+                          AI Decision Support
+                        </div>
+
+                        <h2 className="text-2xl font-bold tracking-tight text-gray-900 md:text-3xl">
+                          {aiDecision?.currentWaterQualityStatus ||
+                            `Class ${aiInsight.overallClass}`}
+                        </h2>
+
+                        <p className="mt-2 max-w-3xl text-sm leading-7 text-gray-600 md:text-base">
+                          {aiDecision?.executiveSummary ||
+                            buildInsightText(aiInsight)}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium ${getRiskBadgeClass(
+                            activeRiskLevel
+                          )}`}
+                        >
+                          {activeRiskLevel} Risk
+                        </span>
+                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700">
+                          Confidence {confidencePercentage}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      <HeroMetricCard
+                        title="Predicted Source of Pollution"
+                        value={
+                          aiDecision?.predictedSourceOfPollution ||
+                          getPredictedSource(aiInsight)
+                        }
+                        hint="Likely pollution hypothesis"
+                      />
+                      <HeroMetricCard
+                        title="Recommended Action"
+                        value={
+                          aiDecision?.recommendedAction ||
+                          aiInsight.recommendations?.[0] ||
+                          "Continue routine monitoring."
+                        }
+                        hint="Primary next step"
+                      />
+                      <HeroMetricCard
+                        title="Likely Contributor"
+                        value={likelyContributor}
+                        hint="Dominant detected parameter"
+                      />
+                      {/* <HeroMetricCard
+                        title="Last Updated"
+                        value={formatDisplayDateTime(latestRow.Timestamp)}
+                        hint={refreshingLatest ? "Refreshing latest snapshot..." : "Latest available reading"}
+                      /> */}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-white/60 bg-white/70 p-6 backdrop-blur lg:border-l lg:border-t-0">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+                          AI Interpretation
+                        </p>
+                        <h3 className="mt-1 text-lg font-semibold text-gray-900">
+                          Decision Summary
+                        </h3>
+                      </div>
+
+                      {loadingAIDecision ? (
+                        <span className="text-xs text-gray-500">
+                          Generating...
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {aiDecisionError && (
+                      <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                        {aiDecisionError}
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <MiniDecisionRow
+                        label="AI Prediction"
+                        value={
+                          aiDecision?.currentWaterQualityStatus ||
+                          `Class ${aiInsight.overallClass}`
+                        }
+                      />
+                      <MiniDecisionRow
+                        label="AI Interpretation"
+                        value={activeRiskLevel}
+                      />
+                      <MiniDecisionRow
+                        label="AI Confidence"
+                        value={`${confidencePercentage}%`}
+                      />
+                      <MiniDecisionRow
+                        label="AI Recommendation"
+                        value={
+                          aiDecision?.recommendedAction ||
+                          aiInsight.recommendations?.[0] ||
+                          "Continue routine monitoring."
+                        }
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleGetMoreAIInsight}
+                      className="mt-5 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-indigo-700"
+                    >
+                      Get More AI Insight
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* ===== TREND ===== */}
-      <div className="max-w-6xl mx-auto px-4">
-          {/* ===== TREND HEADER ===== */}
-          <div className="mb-6">
-            {/* Title */}
-            <h2 className="font-semibold text-gray-800 text-lg mb-4">
-              Trend Analysis
-            </h2>
+          {latestRow && (
+  <div
+    id="latest-ai-assessment"
+    className="mx-auto max-w-6xl px-4"
+  >
+              <div className="rounded-2xl border bg-white p-6 shadow-sm">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="flex items-center gap-2 font-semibold text-gray-800">
+                      <span>🤖</span>
+                      <span>AI Summary Cards</span>
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Immediate AI-driven indicators for current river condition
+                    </p>
+                  </div>
 
-            {/* Filter + Actions Row */}
-            <div className="flex items-center justify-between">
-              {/* LEFT: Date Filter */}
-              <div className="flex items-end gap-3">
-                {/* Start */}
-                <div className="flex flex-col">
-                  <label className="text-xs text-gray-500 mb-1">Start</label>
-                  <input
-                    type="date"
-                    value={start}
-                    onChange={(e) => setStart(e.target.value)}
-                    className="border rounded-lg px-3 py-2 text-sm"
-                  />
+                  <span
+                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-medium ${getRiskBadgeClass(
+                      activeRiskLevel
+                    )}`}
+                  >
+                    {activeRiskLevel} Alert
+                  </span>
                 </div>
 
-                {/* End */}
-                <div className="flex flex-col">
-                  <label className="text-xs text-gray-500 mb-1">End</label>
-                  <input
-                    type="date"
-                    value={end}
-                    onChange={(e) => setEnd(e.target.value)}
-                    className="border rounded-lg px-3 py-2 text-sm"
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <FancySummaryCard
+                    title="AI Water Quality Class"
+                    value={`Class ${aiInsight.overallClass}`}
+                    subtitle="Current AI-assisted classification"
+                    accent="emerald"
                   />
+                  <FancySummaryCard
+                    title="AI Risk Alert"
+                    value={activeRiskLevel}
+                    subtitle={`${aiInsight.riskScore}/100 risk score`}
+                    accent="red"
+                    badgeClass={getRiskBadgeClass(activeRiskLevel)}
+                  />
+                  <FancySummaryCard
+                    title="Likely Pollution Contributor"
+                    value={likelyContributor}
+                    subtitle="Most influential detected parameter"
+                    accent="amber"
+                  />
+                  <FancySummaryCard
+                    title="Confidence Percentage"
+                    value={`${confidencePercentage}%`}
+                    subtitle="AI analysis confidence"
+                    accent="indigo"
+                  />
+                  {/* <FancySummaryCard
+                    title="Last Updated Time"
+                    value={formatDisplayDateTime(latestRow.Timestamp)}
+                    subtitle="Latest reading timestamp"
+                    accent="indigo"
+                  /> */}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {latestRow && (
+            <div className="mx-auto max-w-6xl px-4">
+              <div className="rounded-2xl border bg-white p-6 shadow-sm">
+                <div className="mb-5">
+                  <h2 className="flex items-center gap-2 font-semibold text-gray-800">
+                    <span>📌</span>
+                    <span>AI Insight Panel</span>
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Explanation of AI decision and suggested next action based on
+                    recent river condition
+                  </p>
                 </div>
 
-                {/* Load */}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  <InsightPanelCard
+                    title="AI-Driven Insight"
+                    content={
+                      aiDecision?.executiveSummary || buildInsightText(aiInsight)
+                    }
+                  />
+                  <InsightPanelCard
+                    title="Explanation of AI Decision"
+                    content={buildExplanationText(aiInsight, aiDecision)}
+                  />
+                  <InsightPanelCard
+                    title="Suggested Mitigation or Next Action"
+                    content={
+                      aiDecision?.recommendedAction ||
+                      aiInsight.recommendations.join(" ") ||
+                      "Continue routine monitoring and verify current river condition."
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {latestRow && (
+            <div className="mx-auto max-w-6xl px-4">
+              <div className="rounded-2xl border bg-white p-6 shadow-sm">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold text-gray-800">
+                      Latest Snapshot
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Real-time parameter overview for the selected monitoring
+                      area
+                    </p>
+                  </div>
+
+                  <span className="whitespace-nowrap text-sm text-gray-500">
+                    {formatDisplayDateTime(latestRow.Timestamp)}
+                    {refreshingLatest ? " · Refreshing..." : ""}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+                  {SENSOR_KEYS.map((key) => (
+                    <DataCard
+                      key={key}
+                      sensorKey={key}
+                      value={latestRow[key]}
+                      roundValue={roundValue}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="mx-auto max-w-6xl px-4">
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="flex items-center gap-2 font-semibold text-gray-800">
+                    <span>📊</span>
+                    <span>Supporting Data Visualization</span>
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    AI decides first, graphs and indicators support the interpretation
+                  </p>
+                </div>
+
                 <button
-                  onClick={() => fetchHistorical(start, end)}
-                  disabled={loadingHistorical}
-                  className={`px-4 py-2 rounded-lg text-sm h-[38px] ${
-                    loadingHistorical
-                      ? "bg-blue-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700"
-                  } text-white`}
+                  onClick={() => setShowVisualization((prev) => !prev)}
+                  className="rounded-lg border px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
                 >
-                  {loadingHistorical ? "Loading..." : "Load Data"}
+                  {showVisualization ? "Hide Visualization" : "Show Visualization"}
                 </button>
               </div>
 
-              {/* RIGHT: Actions */}
-              <div className="flex gap-3">
+              <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <SmallInfoPanel
+                  title="Trend Highlights"
+                  items={
+                    keyTrendItems.length > 0
+                      ? keyTrendItems.map(
+                          (item: any) =>
+                            `${item.label}: ${item.direction} (${item.changePct}%)`
+                        )
+                      : ["No significant trend shift detected."]
+                  }
+                />
+
+                <SmallInfoPanel
+                  title="Parameter Comparison"
+                  items={[
+                    `Likely contributor: ${likelyContributor}`,
+                    `Risk level: ${activeRiskLevel}`,
+                    `Class prediction: ${aiInsight.overallClass}`,
+                  ]}
+                />
+
+                <SmallInfoPanel
+                  title="Threshold Exceedance Indicators"
+                  items={
+                    exceedanceIndicators.length > 0
+                      ? exceedanceIndicators.map(
+                          (item: any) => `${item.label}: Class ${item.className}`
+                        )
+                      : ["No major threshold exceedance detected."]
+                  }
+                />
+              </div>
+
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="flex flex-col">
+                    <label className="mb-1 text-xs text-gray-500">Start</label>
+                    <input
+                      type="date"
+                      value={start}
+                      onChange={(e) => setStart(e.target.value)}
+                      className="rounded-lg border px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div className="flex flex-col">
+                    <label className="mb-1 text-xs text-gray-500">End</label>
+                    <input
+                      type="date"
+                      value={end}
+                      onChange={(e) => setEnd(e.target.value)}
+                      className="rounded-lg border px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <button
+                    onClick={() => fetchHistorical(start, end)}
+                    disabled={loadingHistorical}
+                    className={`h-[38px] rounded-lg px-4 py-2 text-sm text-white ${
+                      loadingHistorical
+                        ? "cursor-not-allowed bg-blue-400"
+                        : "bg-blue-600 hover:bg-blue-700"
+                    }`}
+                  >
+                    {loadingHistorical ? "Loading..." : "Load Data"}
+                  </button>
+                </div>
+
                 <button
                   onClick={handleExportPDF}
-                  className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm h-[38px]"
+                  className="h-[38px] rounded-lg bg-gray-800 px-4 py-2 text-sm text-white"
                 >
                   Export PDF
                 </button>
+              </div>
+
+              {loadingHistorical && (
+                <div className="flex items-center justify-center py-10">
+                  <div className="flex items-center gap-3 text-sm text-gray-600">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"></div>
+                    <span>Loading historical data...</span>
+                  </div>
+                </div>
+              )}
+
+              {showVisualization && (
+                <div className="rounded-2xl border bg-gray-50 p-6">
+                  <Visualizations rows={sortedData} schema={schema} />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mx-auto max-w-6xl px-4">
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="font-semibold text-gray-800">
+                    Historical Data
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Reference table for detailed review when needed
+                  </p>
+                </div>
 
                 <button
-                  onClick={() => setShowAI(true)}
-                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm h-[38px]"
+                  onClick={() => setShowHistoricalTable((prev) => !prev)}
+                  className="rounded-lg border px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
                 >
-                  🤖 AI Insight
+                  {showHistoricalTable ? "Hide Table" : "Show Table"}
                 </button>
               </div>
-            </div>
-            {/* LOADING HISTORICAL */}
-            {loadingHistorical && (
-              <div className="flex justify-center items-center py-10">
-                <div className="flex items-center gap-3 text-gray-600 text-sm">
-                  <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                  <span>Loading historical data...</span>
+
+              {showHistoricalTable && paginatedData.length > 0 && (
+                <>
+                  <div className="mb-6 text-center">
+                    <p className="mt-1 text-sm text-gray-500">
+                      {formatDisplayDate(start)} - {formatDisplayDate(end)}
+                    </p>
+
+                    <p className="mt-1 text-xs text-gray-400">
+                      Total Records: {sortedData.length}
+                    </p>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-100">
+                        <tr>
+                          <th
+                            className="cursor-pointer px-3 py-2 text-left"
+                            onClick={() => setSortAsc(!sortAsc)}
+                          >
+                            Timestamp {sortAsc ? "↑" : "↓"}
+                          </th>
+                          {SENSOR_KEYS.map((key) => (
+                            <th key={key} className="px-3 py-2 text-left">
+                              {key}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {paginatedData.map((row, i) => (
+                          <tr
+                            key={i}
+                            className="border-t transition hover:bg-gray-50"
+                          >
+                            <td className="px-3 py-2">
+                              {formatDisplayDateTime(row.Timestamp)}
+                            </td>
+                            {SENSOR_KEYS.map((key) => (
+                              <td key={key} className="px-3 py-2">
+                                {roundValue(row[key])}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {renderPagination()}
+                </>
+              )}
+
+              {showHistoricalTable && paginatedData.length === 0 && !loadingHistorical && (
+                <div className="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">
+                  No historical data available for the selected range.
                 </div>
-              </div>
-            )}
-          </div>
-
-          <div className="border rounded-2xl p-6 bg-white">
-            <Visualizations rows={sortedData} schema={schema} />
-          </div>
-      </div>
-
-      {/* ===== HISTORICAL TABLE ===== */}
-      {paginatedData.length > 0 && (
-        <div className="max-w-6xl mx-auto px-4">
-          {/* ===== TITLE SECTION ===== */}
-          <div className="mb-6 text-center">
-            <h2 className="font-semibold text-gray-800 text-xl">
-              Historical Data
-            </h2>
-
-            <p className="text-sm text-gray-500 mt-1">
-              {formatDisplayDate(start)} - {formatDisplayDate(end)}
-            </p>
-
-            <p className="text-xs text-gray-400 mt-1">
-              Total Records: {sortedData.length}
-            </p>
-          </div>
-
-          {/* ===== TABLE ===== */}
-          <div className="border rounded-2xl overflow-x-auto bg-white shadow-sm">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th
-                    className="px-3 py-2 cursor-pointer text-left"
-                    onClick={() => setSortAsc(!sortAsc)}
-                  >
-                    Timestamp {sortAsc ? "↑" : "↓"}
-                  </th>
-                  {sensorKeys.map((key) => (
-                    <th key={key} className="px-3 py-2 text-left">
-                      {key}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-
-              <tbody>
-                {paginatedData.map((row, i) => (
-                  <tr key={i} className="border-t hover:bg-gray-50 transition">
-                    <td className="px-3 py-2">
-                      {formatDisplayDateTime(row.Timestamp)}
-                    </td>
-                    {sensorKeys.map((key) => (
-                      <td key={key} className="px-3 py-2">
-                        {roundValue(row[key])}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {renderPagination()}
-        </div>
-      )}
-      {/* ===== AI MODAL ===== */}
-      {showAI && (
-        <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
-          <div className="bg-white rounded-2xl w-[90%] max-w-4xl p-6 relative">
-            <button
-              onClick={() => setShowAI(false)}
-              className="absolute top-4 right-4"
-            >
-              ✕
-            </button>
-            <OpenAIPanel rows={sortedData} />
+              )}
+            </div>
           </div>
         </div>
       )}
-        </div>
+
+      {showInsightModal && (
+        <DetailedInsightModal
+          isOpen={showInsightModal}
+          onClose={() => setShowInsightModal(false)}
+          loading={loadingDetailedInsight}
+          error={detailedInsightError}
+          data={detailedInsight}
+          riskLevel={activeRiskLevel}
+          timestamp={latestRow?.Timestamp || ""}
+          decision={aiDecision}
+          confidencePercentage={confidencePercentage}
+          fallbackSource={getPredictedSource(aiInsight)}
+          fallbackClass={`Class ${aiInsight.overallClass}`}
+        />
       )}
     </>
   );
 }
 
-/* ===== DATA CARD ===== */
+function getPredictedSource(aiInsight: any) {
+  const dominant = aiInsight?.dominantParameters || [];
+  const anomalyText = (aiInsight?.anomalies || [])
+    .map((a: any) => `${a.label} ${a.message}`)
+    .join(" ");
+
+  if (
+    dominant.includes("Ammonia") &&
+    (dominant.includes("COD") || dominant.includes("BOD"))
+  ) {
+    return "Possible domestic wastewater or organic discharge";
+  }
+
+  if (dominant.includes("Turbidity")) {
+    return "Possible sediment runoff or land disturbance";
+  }
+
+  if (
+    dominant.includes("Conductivity") ||
+    anomalyText.toLowerCase().includes("ph")
+  ) {
+    return "Possible chemical or industrial discharge";
+  }
+
+  if (dominant.includes("DO")) {
+    return "Possible oxygen depletion caused by organic contamination";
+  }
+
+  return "Potential mixed-source pollution requires further investigation";
+}
+
+function buildInsightText(aiInsight: any) {
+  const contributor =
+    aiInsight?.dominantParameters?.length > 0
+      ? aiInsight.dominantParameters.join(", ")
+      : "multiple water quality parameters";
+
+  return `${contributor} show the strongest influence on current water quality deterioration. The overall pattern indicates elevated pollution pressure with ${aiInsight.riskLevel.toLowerCase()} to critical monitoring concern depending on recent parameter movement.`;
+}
+
+function buildExplanationText(
+  aiInsight: any,
+  aiDecision: AIDecisionResponse | null
+) {
+  if (aiDecision?.executiveSummary) {
+    return aiDecision.executiveSummary;
+  }
+
+  const anomaly =
+    aiInsight?.anomalies?.length > 0
+      ? aiInsight.anomalies[0].message
+      : "no major abrupt anomaly was detected";
+
+  return `The AI decision is based on the current class prediction, detected trend direction, and recent anomaly pattern. ${anomaly}. This interpretation supports the current AI assessment of Class ${aiInsight.overallClass} with ${aiInsight.riskLevel.toLowerCase()} risk.`;
+}
+
+function HeroMetricCard({
+  title,
+  value,
+  hint,
+}: {
+  title: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/70 bg-white/80 p-4 backdrop-blur">
+      <p className="mb-1 text-xs uppercase tracking-wide text-gray-500">
+        {title}
+      </p>
+      <p className="text-sm font-semibold leading-6 text-gray-900">{value}</p>
+      {hint ? <p className="mt-2 text-xs text-gray-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function MiniDecisionRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border bg-white p-3">
+      <p className="text-[11px] uppercase tracking-wide text-gray-500">
+        {label}
+      </p>
+      <p className="mt-1 text-sm font-medium leading-6 text-gray-800">{value}</p>
+    </div>
+  );
+}
+
 function DataCard({
   sensorKey,
   value,
@@ -641,22 +1297,317 @@ function DataCard({
   value: any;
   roundValue: (val: any) => string;
 }) {
-  const labels: Record<string, string> = {
-    Tr_Sensor: "Turbidity",
-    BOD_Sensor: "BOD",
-    DO_Sensor: "DO",
-    COD_Sensor: "COD",
-    NH_Sensor: "Ammonia",
-    TDS_Sensor: "TDS",
-    CT_Sensor: "Conductivity",
-    ORP_Sensor: "ORP",
-    pH_Sensor: "pH",
+  const nwqs = getNWQSResult(sensorKey as any, value);
+
+  return (
+    <div className="space-y-3 rounded-xl border bg-gray-50 p-4">
+      <div>
+        <p className="text-xs text-gray-500">{nwqs.label}</p>
+        <p className="text-xl font-semibold text-gray-900">
+          {roundValue(value)}
+          {nwqs.unit ? (
+            <span className="ml-1 text-sm font-normal text-gray-500">
+              {nwqs.unit}
+            </span>
+          ) : null}
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span
+          className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${nwqs.colorClass}`}
+        >
+          Class {nwqs.className}
+        </span>
+
+        <span className="text-xs text-gray-600">{nwqs.status}</span>
+      </div>
+
+      <p className="text-[11px] leading-relaxed text-gray-500">
+        {nwqs.description}
+      </p>
+    </div>
+  );
+}
+
+function FancySummaryCard({
+  title,
+  value,
+  subtitle,
+  accent = "indigo",
+  badgeClass,
+}: {
+  title: string;
+  value: string;
+  subtitle?: string;
+  accent?: "emerald" | "red" | "amber" | "indigo";
+  badgeClass?: string;
+}) {
+  const accentMap: Record<string, string> = {
+    emerald: "from-emerald-500 to-teal-500",
+    red: "from-red-500 to-orange-500",
+    amber: "from-amber-500 to-yellow-500",
+    indigo: "from-indigo-500 to-purple-500",
   };
 
   return (
-    <div className="border rounded-xl p-4 bg-gray-50">
-      <p className="text-xs text-gray-500">{labels[sensorKey]}</p>
-      <p className="text-xl font-semibold">{roundValue(value)}</p>
+    <div className="rounded-2xl border bg-gray-50 p-4 transition hover:shadow-sm">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div
+          className={`h-2.5 w-10 rounded-full bg-gradient-to-r ${accentMap[accent]}`}
+        />
+        {badgeClass ? (
+          <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${badgeClass}`}
+          >
+            Active
+          </span>
+        ) : null}
+      </div>
+
+      <p className="mb-1 text-xs text-gray-500">{title}</p>
+      <p className="break-words text-base font-semibold leading-snug text-gray-900">
+        {value}
+      </p>
+
+      {subtitle ? (
+        <p className="mt-2 text-xs leading-relaxed text-gray-500">
+          {subtitle}
+        </p>
+      ) : null}
     </div>
   );
+}
+
+function InsightPanelCard({
+  title,
+  content,
+}: {
+  title: string;
+  content: string;
+}) {
+  return (
+    <div className="rounded-xl border bg-gradient-to-b from-gray-50 to-white p-4 transition hover:shadow-sm">
+      <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">
+        {title}
+      </p>
+      <p className="text-sm leading-relaxed text-gray-700">{content}</p>
+    </div>
+  );
+}
+
+function SmallInfoPanel({
+  title,
+  items,
+}: {
+  title: string;
+  items: string[];
+}) {
+  return (
+    <div className="rounded-xl border bg-white p-4">
+      <p className="mb-3 text-xs uppercase tracking-wide text-gray-500">
+        {title}
+      </p>
+      <div className="space-y-2">
+        {items.map((item, idx) => (
+          <p key={idx} className="text-sm leading-relaxed text-gray-700">
+            • {item}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DetailedInsightModal({
+  isOpen,
+  onClose,
+  loading,
+  error,
+  data,
+  riskLevel,
+  timestamp,
+  decision,
+  confidencePercentage,
+  fallbackSource,
+  fallbackClass,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  loading: boolean;
+  error: string | null;
+  data: DetailedInsightResponse | null;
+  riskLevel: string;
+  timestamp: string;
+  decision: AIDecisionResponse | null;
+  confidencePercentage: number;
+  fallbackSource: string;
+  fallbackClass: string;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100]">
+      <div
+        className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+        onClick={onClose}
+      />
+
+      <div className="absolute inset-0 flex items-center justify-center p-4">
+        <div className="max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-3xl border bg-white shadow-2xl">
+          <div className="flex items-start justify-between gap-4 border-b bg-gradient-to-r from-indigo-50 to-white px-6 py-5">
+            <div>
+              <h3 className="text-2xl font-semibold text-gray-900">
+                More AI Insight
+              </h3>
+              <p className="mt-1 text-sm text-gray-500">
+                Detailed AI interpretation for current river condition
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="inline-flex items-center rounded-full border bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
+                  Risk Level: {riskLevel}
+                </span>
+                <span className="inline-flex items-center rounded-full border bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
+                  Timestamp: {timestamp ? formatModalDateTime(timestamp) : "-"}
+                </span>
+                <span className="inline-flex items-center rounded-full border bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
+                  Confidence: {confidencePercentage}%
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={onClose}
+              className="h-10 w-10 rounded-full border text-lg text-gray-500 hover:bg-gray-50"
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="max-h-[calc(90vh-92px)] overflow-y-auto px-6 py-6">
+            {loading && (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="mb-4 h-8 w-8 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent"></div>
+                <p className="text-base font-medium text-gray-800">
+                  Generating detailed AI insight...
+                </p>
+                <p className="mt-1 text-sm text-gray-500">
+                  OpenAI is expanding each AI decision component into a fuller explanation
+                </p>
+              </div>
+            )}
+
+            {!loading && error && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+
+            {!loading && !error && (
+              <div className="space-y-6">
+                <div className="rounded-2xl border bg-gray-50 p-5">
+                  <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">
+                    Overall Narrative
+                  </p>
+                  <p className="text-sm leading-7 text-gray-700">
+                    {data?.overallNarrative ||
+                      "This expanded section explains the AI decision in more detail so the user can understand the meaning, context, and operational implication of the current water quality assessment."}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <ExpandedDecisionCard
+                    title={data?.predictionTitle || "AI Prediction"}
+                    headline={decision?.currentWaterQualityStatus || fallbackClass}
+                    description={
+                      data?.predictionDetail ||
+                      "This section explains the predicted water quality status in more detail."
+                    }
+                  />
+
+                  <ExpandedDecisionCard
+                    title={data?.interpretationTitle || "AI Interpretation"}
+                    headline={decision?.pollutionRiskLevel || riskLevel}
+                    description={
+                      data?.interpretationDetail ||
+                      "This section explains why the AI interpreted the condition at the current severity level."
+                    }
+                  />
+
+                  <ExpandedDecisionCard
+                    title={data?.sourceTitle || "Predicted Source of Pollution"}
+                    headline={decision?.predictedSourceOfPollution || fallbackSource}
+                    description={
+                      data?.sourceDetail ||
+                      "This section explains the likely source hypothesis behind the current river condition."
+                    }
+                  />
+
+                  <ExpandedDecisionCard
+                    title={data?.confidenceTitle || "AI Confidence"}
+                    headline={`${confidencePercentage}%`}
+                    description={
+                      data?.confidenceDetail ||
+                      "This section explains how the confidence level should be interpreted."
+                    }
+                  />
+
+                  <div className="lg:col-span-2">
+                    <ExpandedDecisionCard
+                      title={data?.recommendationTitle || "AI Recommendation"}
+                      headline={
+                        decision?.recommendedAction ||
+                        "Continue routine monitoring."
+                      }
+                      description={
+                        data?.recommendationDetail ||
+                        "This section explains the recommended follow-up action in more detail."
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExpandedDecisionCard({
+  title,
+  headline,
+  description,
+}: {
+  title: string;
+  headline: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-2xl border bg-white p-5">
+      <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">
+        {title}
+      </p>
+      <p className="mb-3 text-lg font-semibold leading-snug text-gray-900">
+        {headline}
+      </p>
+      <p className="text-sm leading-7 text-gray-700">{description}</p>
+    </div>
+  );
+}
+
+function formatModalDateTime(ts: string) {
+  if (!ts) return "-";
+
+  const date = new Date(ts);
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const second = String(date.getSeconds()).padStart(2, "0");
+
+  return `${day}/${month}/${year}, ${hour}:${minute}:${second}`;
 }
