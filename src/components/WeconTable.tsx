@@ -363,7 +363,8 @@ export default function WeconTable({ initialArea }: Props) {
       }. This hypothesis is derived from the pattern of elevated organic load, ammonia-related stress, conductivity or turbidity shifts, and supporting anomaly indicators.`;
 
       const fallbackConfidence = `The confidence score of ${
-        aiDecision?.confidenceScore || Math.min(95, Math.max(60, aiInsight.riskScore))
+        aiDecision?.confidenceScore ||
+        Math.min(95, Math.max(60, aiInsight.riskScore))
       }% indicates the model has reasonably strong certainty in its present assessment. This should still be interpreted alongside field validation and operational judgement.`;
 
       const fallbackRecommendation = `${
@@ -720,7 +721,9 @@ export default function WeconTable({ initialArea }: Props) {
                     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-1 text-xs font-medium text-gray-700 backdrop-blur">
-                          <span className={`h-2.5 w-2.5 rounded-full ${heroStyles.accent}`} />
+                          <span
+                            className={`h-2.5 w-2.5 rounded-full ${heroStyles.accent}`}
+                          />
                           AI Decision Support
                         </div>
 
@@ -772,11 +775,6 @@ export default function WeconTable({ initialArea }: Props) {
                         value={likelyContributor}
                         hint="Dominant detected parameter"
                       />
-                      {/* <HeroMetricCard
-                        title="Last Updated"
-                        value={formatDisplayDateTime(latestRow.Timestamp)}
-                        hint={refreshingLatest ? "Refreshing latest snapshot..." : "Latest available reading"}
-                      /> */}
                     </div>
                   </div>
 
@@ -843,10 +841,7 @@ export default function WeconTable({ initialArea }: Props) {
           )}
 
           {latestRow && (
-  <div
-    id="latest-ai-assessment"
-    className="mx-auto max-w-6xl px-4"
-  >
+            <div id="latest-ai-assessment" className="mx-auto max-w-6xl px-4">
               <div className="rounded-2xl border bg-white p-6 shadow-sm">
                 <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -894,12 +889,6 @@ export default function WeconTable({ initialArea }: Props) {
                     subtitle="AI analysis confidence"
                     accent="indigo"
                   />
-                  {/* <FancySummaryCard
-                    title="Last Updated Time"
-                    value={formatDisplayDateTime(latestRow.Timestamp)}
-                    subtitle="Latest reading timestamp"
-                    accent="indigo"
-                  /> */}
                 </div>
               </div>
             </div>
@@ -963,15 +952,23 @@ export default function WeconTable({ initialArea }: Props) {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
-                  {SENSOR_KEYS.map((key) => (
-                    <DataCard
-                      key={key}
-                      sensorKey={key}
-                      value={latestRow[key]}
-                      roundValue={roundValue}
-                    />
-                  ))}
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
+                  <div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3">
+                      {SENSOR_KEYS.map((key) => (
+                        <DataCard
+                          key={key}
+                          sensorKey={key}
+                          value={latestRow[key]}
+                          roundValue={roundValue}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="xl:sticky xl:top-24 xl:self-start">
+                    <WaterClassCompactReference />
+                  </div>
                 </div>
               </div>
             </div>
@@ -1166,11 +1163,13 @@ export default function WeconTable({ initialArea }: Props) {
                 </>
               )}
 
-              {showHistoricalTable && paginatedData.length === 0 && !loadingHistorical && (
-                <div className="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">
-                  No historical data available for the selected range.
-                </div>
-              )}
+              {showHistoricalTable &&
+                paginatedData.length === 0 &&
+                !loadingHistorical && (
+                  <div className="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">
+                    No historical data available for the selected range.
+                  </div>
+                )}
             </div>
           </div>
         </div>
@@ -1283,7 +1282,9 @@ function MiniDecisionRow({
       <p className="text-[11px] uppercase tracking-wide text-gray-500">
         {label}
       </p>
-      <p className="mt-1 text-sm font-medium leading-6 text-gray-800">{value}</p>
+      <p className="mt-1 text-sm font-medium leading-6 text-gray-800">
+        {value}
+      </p>
     </div>
   );
 }
@@ -1413,6 +1414,50 @@ function SmallInfoPanel({
           <p key={idx} className="text-sm leading-relaxed text-gray-700">
             • {item}
           </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WaterClassCompactReference() {
+  const classItems = [
+    { className: "Class I", use: "Conservation, Water Supply I, sensitive fishery" },
+    { className: "Class IIA", use: "Water Supply II, sensitive aquatic species" },
+    { className: "Class IIB", use: "Recreational use with body contact" },
+    { className: "Class III", use: "Water Supply III, common fishery, livestock" },
+    { className: "Class IV", use: "Irrigation" },
+    { className: "Class V", use: "None of the above" },
+  ];
+
+  return (
+    <div className="rounded-2xl border bg-gradient-to-b from-slate-50 to-white p-4 shadow-sm">
+      <div className="mb-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+          NWQS / WQI Reference
+        </p>
+        <h3 className="mt-1 text-sm font-semibold text-gray-900">
+          Water Class Uses
+        </h3>
+        <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
+          Compact reference for Class I–V based on National Water Quality
+          Standards and Water Quality Index.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        {classItems.map((item) => (
+          <div
+            key={item.className}
+            className="rounded-xl border bg-white px-3 py-2"
+          >
+            <p className="text-xs font-semibold text-gray-800">
+              {item.className}
+            </p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-gray-600">
+              {item.use}
+            </p>
+          </div>
         ))}
       </div>
     </div>
