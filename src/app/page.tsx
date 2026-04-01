@@ -7,20 +7,24 @@ import WeconTable from "@/components/WeconTable";
 import LoadingScreen from "@/components/LoadingScreen";
 import { fetchSupportedLocations, setRetryCallback } from "@/lib/apiClient";
 
-const MapSelector = dynamic(
-  () => import("@/components/MapSelector"),
-  { ssr: false }
-);
+const MapSelector = dynamic(() => import("@/components/MapSelector"), {
+  ssr: false,
+});
 
 export default function Page() {
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [loadingStage, setLoadingStage] = useState<"connecting" | "booting" | "loading">("connecting");
+  const [loadingStage, setLoadingStage] = useState<
+    "connecting" | "booting" | "loading"
+  >("connecting");
   const [retryAttempt, setRetryAttempt] = useState(0);
 
-  // Check API availability on page load
   useEffect(() => {
-    const handleRetry = (attempt: number, totalRetries: number, isBootingError: boolean) => {
+    const handleRetry = (
+      attempt: number,
+      _totalRetries: number,
+      isBootingError: boolean
+    ) => {
       setRetryAttempt(attempt);
       if (isBootingError) {
         setLoadingStage("booting");
@@ -34,18 +38,17 @@ export default function Page() {
       setLoadingStage("connecting");
 
       try {
-        // Try to fetch supported locations to verify API is ready
         const locations = await fetchSupportedLocations();
+
         if (locations && locations.length > 0) {
           setLoadingStage("loading");
-          // Small delay to show "loading" stage
           await new Promise((r) => setTimeout(r, 500));
         }
       } catch (error) {
         console.error("Failed to check API availability:", error);
       } finally {
         setInitialLoading(false);
-        setRetryCallback(null); // Clean up callback
+        setRetryCallback(null);
       }
     }
 
@@ -54,9 +57,8 @@ export default function Page() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      {/* Loading Screen - shown while checking API availability */}
-      <LoadingScreen 
-        isVisible={initialLoading} 
+      <LoadingScreen
+        isVisible={initialLoading}
         stage={loadingStage}
         message={
           loadingStage === "booting"
@@ -65,31 +67,19 @@ export default function Page() {
         }
       />
 
-      {/* Only show content when API is ready */}
       {!initialLoading && (
         <>
-          {/* Header tetap ada */}
-          <HeroHeader />
-
-          {/* Map Selection */}
-          {!selectedArea && (
-            <section className="py-10">
-              <div className="max-w-6xl mx-auto px-4">
-                <MapSelector onSelect={setSelectedArea} />
-              </div>
-            </section>
-          )}
-
-          {/* Dashboard Section */}
-          {selectedArea && (
+          {!selectedArea ? (
+            <HeroHeader>
+                  <MapSelector onSelect={setSelectedArea} />
+            </HeroHeader>
+          ) : (
             <section className="py-8">
-              <div className="max-w-6xl mx-auto px-4 space-y-6">
-                
-                {/* Back + Area Info */}
-                <div className="flex items-center justify-between">
+              <div className="mx-auto max-w-6xl px-4 space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <button
                     onClick={() => setSelectedArea(null)}
-                    className="text-blue-600 hover:text-blue-800 font-medium text-sm"
+                    className="text-sm font-medium text-blue-600 hover:text-blue-800"
                   >
                     ← Back to Map
                   </button>
@@ -102,7 +92,6 @@ export default function Page() {
                   </div>
                 </div>
 
-                {/* Main Monitoring Table */}
                 <WeconTable initialArea={selectedArea} />
               </div>
             </section>

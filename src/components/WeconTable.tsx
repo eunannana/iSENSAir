@@ -523,8 +523,82 @@ export default function WeconTable({ initialArea }: Props) {
       .slice(0, 5);
   }, [aiInsight.trendSummary]);
 
-  const totalPages = Math.ceil(sortedData.length / rowsPerPage);
+  const anomalyHighlights = useMemo(() => {
+  return (aiInsight.anomalies || []).slice(0, 3);
+}, [aiInsight.anomalies]);
 
+const activeRiskLevel =
+  aiDecision?.pollutionRiskLevel || aiInsight.riskLevel || "Moderate";
+
+const riskDrivers = useMemo(() => {
+  const items: string[] = [];
+
+  if (aiInsight?.dominantParameters?.length) {
+    items.push(
+      `${aiInsight.dominantParameters.join(
+        ", "
+      )} are the strongest contributors to the current classification.`
+    );
+  }
+
+  if (exceedanceIndicators.length > 0) {
+    items.push(
+      `${exceedanceIndicators
+        .slice(0, 3)
+        .map((item: any) => `${item.label} reaches Class ${item.className}`)
+        .join(", ")}.`
+    );
+  }
+
+  if (anomalyHighlights.length > 0) {
+    items.push(
+      `${anomalyHighlights
+        .map((item: any) => `${item.label}: ${item.message}`)
+        .join(" ")}`
+    );
+  }
+
+  if (items.length === 0) {
+    items.push(
+      "The decision is based on combined threshold evaluation, recent trend movement, and overall parameter behaviour."
+    );
+  }
+
+  return items.join(" ");
+}, [aiInsight, exceedanceIndicators, anomalyHighlights]);
+
+const evidenceNarrative = useMemo(() => {
+  if (keyTrendItems.length > 0) {
+    return keyTrendItems
+      .map(
+        (item: any) =>
+          `${item.label} is ${item.direction} (${item.changePct}%)`
+      )
+      .join(". ");
+  }
+
+  if (anomalyHighlights.length > 0) {
+    return anomalyHighlights
+      .map((item: any) => `${item.label}: ${item.message}`)
+      .join(". ");
+  }
+
+  return "No strong short-term movement was detected, so the current interpretation relies primarily on present threshold condition and dominant parameter levels.";
+}, [keyTrendItems, anomalyHighlights]);
+
+const impactNarrative = useMemo(() => {
+  if (activeRiskLevel === "Critical" || activeRiskLevel === "High") {
+    return `Current conditions suggest a high likelihood of ecological stress. Elevated ${likelyContributor} may reduce water suitability, disturb aquatic balance, and indicate pollutant pressure requiring operational follow-up.`;
+  }
+
+  if (activeRiskLevel === "Moderate") {
+    return `The river condition shows moderate concern. Continued monitoring is important because changes in ${likelyContributor} may escalate if the present pattern persists.`;
+  }
+
+  return `Current signals suggest relatively controlled conditions, but continued observation remains necessary to ensure parameter stability over time.`;
+}, [likelyContributor, activeRiskLevel]);
+
+const totalPages = Math.ceil(sortedData.length / rowsPerPage);
   const paginatedData = sortedData.slice(
     (currentPage - 1) * rowsPerPage,
     currentPage * rowsPerPage
@@ -684,9 +758,6 @@ export default function WeconTable({ initialArea }: Props) {
       </div>
     );
   }
-
-  const activeRiskLevel =
-    aiDecision?.pollutionRiskLevel || aiInsight.riskLevel || "Moderate";
   const heroStyles = getHeroStyles(activeRiskLevel);
 
   return (
@@ -846,11 +917,11 @@ export default function WeconTable({ initialArea }: Props) {
                 <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="flex items-center gap-2 font-semibold text-gray-800">
-                      <span>🤖</span>
-                      <span>AI Summary Cards</span>
+                      <span>⚡</span>
+                      <span>AI Key Indicators</span>
                     </h2>
                     <p className="mt-1 text-sm text-gray-500">
-                      Immediate AI-driven indicators for current river condition
+                      Supporting signals derived from AI analysis without repeating the main decision
                     </p>
                   </div>
 
@@ -865,29 +936,34 @@ export default function WeconTable({ initialArea }: Props) {
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <FancySummaryCard
-                    title="AI Water Quality Class"
-                    value={`Class ${aiInsight.overallClass}`}
-                    subtitle="Current AI-assisted classification"
-                    accent="emerald"
+                    title="Trend Direction"
+                    value={
+                      keyTrendItems.length > 0
+                        ? capitalizeText(keyTrendItems[0].direction)
+                        : "Stable"
+                    }
+                    subtitle="Recent dominant movement"
+                    accent="indigo"
                   />
                   <FancySummaryCard
-                    title="AI Risk Alert"
-                    value={activeRiskLevel}
-                    subtitle={`${aiInsight.riskScore}/100 risk score`}
-                    accent="red"
-                    badgeClass={getRiskBadgeClass(activeRiskLevel)}
-                  />
-                  <FancySummaryCard
-                    title="Likely Pollution Contributor"
-                    value={likelyContributor}
-                    subtitle="Most influential detected parameter"
+                    title="Anomaly Detection"
+                    value={
+                      aiInsight.anomalies?.length > 0 ? "Detected" : "No anomaly"
+                    }
+                    subtitle="Based on recent sensor behaviour"
                     accent="amber"
                   />
                   <FancySummaryCard
-                    title="Confidence Percentage"
-                    value={`${confidencePercentage}%`}
-                    subtitle="AI analysis confidence"
-                    accent="indigo"
+                    title="Dominant Parameter"
+                    value={likelyContributor}
+                    subtitle="Strongest impact factor"
+                    accent="red"
+                  />
+                  <FancySummaryCard
+                    title="Risk Score"
+                    value={`${aiInsight.riskScore}/100`}
+                    subtitle="Computed severity index"
+                    accent="emerald"
                   />
                 </div>
               </div>
@@ -899,33 +975,26 @@ export default function WeconTable({ initialArea }: Props) {
               <div className="rounded-2xl border bg-white p-6 shadow-sm">
                 <div className="mb-5">
                   <h2 className="flex items-center gap-2 font-semibold text-gray-800">
-                    <span>📌</span>
-                    <span>AI Insight Panel</span>
+                    <span>🧠</span>
+                    <span>Why & Evidence Analysis</span>
                   </h2>
                   <p className="mt-1 text-sm text-gray-500">
-                    Explanation of AI decision and suggested next action based on
-                    recent river condition
+                    Explanation of why the AI reached this decision based on threshold, trend, and environmental interpretation
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                   <InsightPanelCard
-                    title="AI-Driven Insight"
-                    content={
-                      aiDecision?.executiveSummary || buildInsightText(aiInsight)
-                    }
+                    title="Why This Classification"
+                    content={riskDrivers}
                   />
                   <InsightPanelCard
-                    title="Explanation of AI Decision"
-                    content={buildExplanationText(aiInsight, aiDecision)}
+                    title="Supporting Evidence"
+                    content={evidenceNarrative}
                   />
                   <InsightPanelCard
-                    title="Suggested Mitigation or Next Action"
-                    content={
-                      aiDecision?.recommendedAction ||
-                      aiInsight.recommendations.join(" ") ||
-                      "Continue routine monitoring and verify current river condition."
-                    }
+                    title="Environmental Impact Insight"
+                    content={impactNarrative}
                   />
                 </div>
               </div>
@@ -1234,20 +1303,9 @@ function buildInsightText(aiInsight: any) {
   return `${contributor} show the strongest influence on current water quality deterioration. The overall pattern indicates elevated pollution pressure with ${aiInsight.riskLevel.toLowerCase()} to critical monitoring concern depending on recent parameter movement.`;
 }
 
-function buildExplanationText(
-  aiInsight: any,
-  aiDecision: AIDecisionResponse | null
-) {
-  if (aiDecision?.executiveSummary) {
-    return aiDecision.executiveSummary;
-  }
-
-  const anomaly =
-    aiInsight?.anomalies?.length > 0
-      ? aiInsight.anomalies[0].message
-      : "no major abrupt anomaly was detected";
-
-  return `The AI decision is based on the current class prediction, detected trend direction, and recent anomaly pattern. ${anomaly}. This interpretation supports the current AI assessment of Class ${aiInsight.overallClass} with ${aiInsight.riskLevel.toLowerCase()} risk.`;
+function capitalizeText(value: string) {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function HeroMetricCard({
@@ -1336,13 +1394,11 @@ function FancySummaryCard({
   value,
   subtitle,
   accent = "indigo",
-  badgeClass,
 }: {
   title: string;
   value: string;
   subtitle?: string;
   accent?: "emerald" | "red" | "amber" | "indigo";
-  badgeClass?: string;
 }) {
   const accentMap: Record<string, string> = {
     emerald: "from-emerald-500 to-teal-500",
@@ -1357,13 +1413,6 @@ function FancySummaryCard({
         <div
           className={`h-2.5 w-10 rounded-full bg-gradient-to-r ${accentMap[accent]}`}
         />
-        {badgeClass ? (
-          <span
-            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${badgeClass}`}
-          >
-            Active
-          </span>
-        ) : null}
       </div>
 
       <p className="mb-1 text-xs text-gray-500">{title}</p>

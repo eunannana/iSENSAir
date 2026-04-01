@@ -1,9 +1,15 @@
 "use client";
-import Image from "next/image";
 
-export default function HeroHeader() {
+import Image from "next/image";
+import { ReactNode } from "react";
+
+type HeroHeaderProps = {
+  children?: ReactNode;
+};
+
+export default function HeroHeader({ children }: HeroHeaderProps) {
   return (
-    <section className="relative w-full isolate overflow-hidden">
+    <section className="relative isolate w-full overflow-hidden">
       {/* Background */}
       <Image
         src="/img/hero-river.jpg"
@@ -18,74 +24,58 @@ export default function HeroHeader() {
       {/* Overlay */}
       <div className="absolute inset-0 bg-white/85 backdrop-blur-[2px]" />
 
-      {/* Content */}
-      <div className="relative container mx-auto px-4 py-8 md:py-12">
-        {/* Logo */}
-        <div className="mx-auto w-full max-w-3xl">
-          <Image
-            src="/img/logo.png"
-            alt="UMPSA • EAESB • PPRN"
-            width={1600}
-            height={400}
-            className="w-full h-auto object-contain opacity-95"
-            priority
-          />
-        </div>
+      {/* Main Content */}
+      <div className="relative mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-7xl flex-col px-4 pt-8 pb-6 md:px-6 md:pt-10 md:pb-8">
+        {/* Top Hero Content */}
+        <div className="flex flex-col items-center text-center">
+          {/* Logo */}
+          <div className="mx-auto w-full max-w-3xl">
+            <Image
+              src="/img/logo.png"
+              alt="UMPSA • EAESB • PPRN"
+              width={1600}
+              height={400}
+              className="h-auto w-full object-contain opacity-95"
+              priority
+            />
+          </div>
 
-        {/* Title */}
-        <h1 className="mt-8 text-center text-2xl md:text-4xl font-extrabold tracking-tight text-gray-800 leading-tight">
-          SMART RIVER WATER QUALITY MONITORING
-          <br className="hidden md:block" />
-          WITH AI-DRIVEN DECISION SUPPORT
-        </h1>
+          {/* Title */}
+          <h1 className="mt-8 text-center text-2xl font-extrabold leading-tight tracking-tight text-gray-800 md:text-4xl xl:text-5xl">
+            SMART RIVER WATER QUALITY MONITORING
+            <br className="hidden md:block" />
+            WITH AI-DRIVEN DECISION SUPPORT
+          </h1>
 
-        {/* Tagline */}
-        <p className="mt-3 text-center text-gray-600 text-base md:text-lg">
-          From sensor data to intelligent insight, prediction, and action
-        </p>
+          {/* Tagline */}
+          <p className="mt-3 max-w-2xl text-center text-base text-gray-600 md:text-lg">
+            From sensor data to intelligent insight, prediction, and action
+          </p>
 
-        {/* 🔥 AI Status Badge */}
-        <div className="mt-5 flex justify-center">
-          <div className="inline-flex items-center gap-2 rounded-full border bg-white px-4 py-2 text-sm text-gray-700 shadow-sm">
-            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            AI Monitoring System Active
+          {/* AI Status Badge */}
+          <div className="mt-5 flex justify-center">
+            <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white/95 px-4 py-2 text-sm text-gray-700 shadow-sm backdrop-blur">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
+              AI Monitoring System Active
+            </div>
+          </div>
+
+          {/* CTA Hint */}
+          <div className="mt-5 text-center">
+            <p className="text-sm text-gray-500">
+              Select a monitoring area below to view AI-based analysis and
+              insights
+            </p>
           </div>
         </div>
 
-
-        {/* 🔥 CTA Hint */}
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-500">
-            Select a monitoring area below to view AI-based analysis and insights
-          </p>
-        </div>
+        {/* Child content still inside hero area */}
+        {children ? (
+          <div className="mt-5 md:mt-6 flex-1">
+            <div className="mx-auto w-full max-w-5xl">{children}</div>
+          </div>
+        ) : null}
       </div>
     </section>
-  );
-}
-
-function QuickInfoCard({
-  title,
-  value,
-  highlight,
-}: {
-  title: string;
-  value: string;
-  highlight?: "red" | "green";
-}) {
-  const highlightClass =
-    highlight === "red"
-      ? "text-red-600"
-      : highlight === "green"
-      ? "text-emerald-600"
-      : "text-gray-900";
-
-  return (
-    <div className="rounded-xl border bg-white/90 backdrop-blur p-4 text-center shadow-sm">
-      <p className="text-xs text-gray-500 mb-1">{title}</p>
-      <p className={`text-sm font-semibold ${highlightClass}`}>
-        {value}
-      </p>
-    </div>
   );
 }
