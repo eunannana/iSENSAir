@@ -25,7 +25,6 @@ export default function HeroHeader({ onScrollToMap }: HeroHeaderProps) {
 
       {/* Content */}
       <div className="relative mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-7xl flex-col items-center justify-center px-4 py-12 text-center md:px-6 md:py-16">
-        
         {/* Logo */}
         <div className="mx-auto w-full max-w-2xl">
           <Image
@@ -38,11 +37,14 @@ export default function HeroHeader({ onScrollToMap }: HeroHeaderProps) {
           />
         </div>
 
-        {/* Title (2 BARIS ONLY) */}
-        <h1 className="mt-6 max-w-4xl text-center text-3xl font-extrabold leading-tight tracking-tight text-gray-800 sm:text-4xl lg:text-5xl">
-          SMART RIVER WATER QUALITY MONITORING
-          <br />
-          AI-DRIVEN DECISION SUPPORT
+        <h1 className="mt-6 text-center text-3xl font-extrabold leading-tight tracking-tight text-gray-800 sm:text-4xl lg:text-5xl">
+          <span className="block whitespace-nowrap">
+            SMART RIVER WATER QUALITY MONITORING
+          </span>
+
+          <span className="block whitespace-nowrap">
+            AI-DRIVEN DECISION SUPPORT
+          </span>
         </h1>
 
         {/* Tagline */}

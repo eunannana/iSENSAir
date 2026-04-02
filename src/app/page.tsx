@@ -63,6 +63,14 @@ export default function Page() {
       block: "start",
     });
   };
+  const handleSelectArea = (area: string) => {
+  setSelectedArea(area);
+
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth",
+  });
+};
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -89,7 +97,7 @@ export default function Page() {
                 id="map-section"
                 className="scroll-mt-24 bg-gray-50 py-14 md:py-20"
               >
-                <MapSelector onSelect={setSelectedArea} />
+                <MapSelector onSelect={handleSelectArea} />
               </section>
             </>
           ) : (

@@ -122,7 +122,7 @@ const SENSOR_META: Record<
   }
 > = {
   Tr_Sensor: {
-    label: "Turbidity (TR)",
+    label: "Turbidity",
     shortLabel: "TR",
     unit: "mg/L",
     min: 0,
@@ -130,7 +130,7 @@ const SENSOR_META: Record<
     severityWeight: 0.95,
   },
   BOD_Sensor: {
-    label: "Biochemical Oxygen Demand (BOD)",
+    label: "Biochemical Oxygen Demand",
     shortLabel: "BOD",
     unit: "mg/L",
     min: 0,
@@ -138,7 +138,7 @@ const SENSOR_META: Record<
     severityWeight: 1.35,
   },
   DO_Sensor: {
-    label: "Dissolved Oxygen (DO)",
+    label: "Dissolved Oxygen",
     shortLabel: "DO",
     unit: "mg/L",
     min: 0,
@@ -146,7 +146,7 @@ const SENSOR_META: Record<
     severityWeight: 1.4,
   },
   COD_Sensor: {
-    label: "Chemical Oxygen Demand (COD)",
+    label: "Chemical Oxygen Demand",
     shortLabel: "COD",
     unit: "mg/L",
     min: 0,
@@ -154,7 +154,7 @@ const SENSOR_META: Record<
     severityWeight: 1.3,
   },
   NH_Sensor: {
-    label: "Ammonia (NH3)",
+    label: "Ammonia",
     shortLabel: "NH3",
     unit: "mg/L",
     min: 0,
@@ -162,7 +162,7 @@ const SENSOR_META: Record<
     severityWeight: 1.45,
   },
   TDS_Sensor: {
-    label: "Total Dissolved Solids (TDS)",
+    label: "Total Dissolved Solids",
     shortLabel: "TDS",
     unit: "mg/L",
     min: 0,
@@ -170,7 +170,7 @@ const SENSOR_META: Record<
     severityWeight: 0.8,
   },
   CT_Sensor: {
-    label: "Conductivity (CT)",
+    label: "Conductivity",
     shortLabel: "CT",
     unit: "µS/cm",
     min: 0,
@@ -178,7 +178,7 @@ const SENSOR_META: Record<
     severityWeight: 0.85,
   },
   ORP_Sensor: {
-    label: "Oxidation Reduction Potential (ORP)",
+    label: "Oxidation Reduction Potential",
     shortLabel: "ORP",
     unit: "mV",
     min: -2000,
@@ -186,7 +186,7 @@ const SENSOR_META: Record<
     severityWeight: 0.75,
   },
   pH_Sensor: {
-    label: "Potential of Hydrogen (pH)",
+    label: "Potential of Hydrogen",
     shortLabel: "pH",
     unit: "",
     min: 0,
@@ -513,23 +513,23 @@ export default function WeconTable({ initialArea }: Props) {
     }
   }
 
-async function fetchSevenDayAIHistory() {
-  const today = getTodayInMalaysia();
-  const endDate = shiftDate(today, -1); // kemarin
-  const startDate = shiftDate(endDate, -(AI_WINDOW_DAYS - 1)); // 7 hari termasuk kemarin
+  async function fetchSevenDayAIHistory() {
+    const today = getTodayInMalaysia();
+    const endDate = shiftDate(today, -1); // kemarin
+    const startDate = shiftDate(endDate, -(AI_WINDOW_DAYS - 1)); // 7 hari termasuk kemarin
 
-  setLoadingAIHistory(true);
-  try {
-    const json = await fetchDataByDateRange(area, startDate, endDate);
-    const arr = Array.isArray(json) ? json : [];
-    setAIHistoryRows(arr);
-  } catch (error) {
-    console.error("Failed to load 7-day AI history:", error);
-    setAIHistoryRows([]);
-  } finally {
-    setLoadingAIHistory(false);
+    setLoadingAIHistory(true);
+    try {
+      const json = await fetchDataByDateRange(area, startDate, endDate);
+      const arr = Array.isArray(json) ? json : [];
+      setAIHistoryRows(arr);
+    } catch (error) {
+      console.error("Failed to load 7-day AI history:", error);
+      setAIHistoryRows([]);
+    } finally {
+      setLoadingAIHistory(false);
+    }
   }
-}
 
   async function generateQuickAIInsight(
     latestRowParam: any,
@@ -1314,7 +1314,7 @@ async function fetchSevenDayAIHistory() {
 
                 {/* SENSOR GRID */}
                 <div
-                  className={`grid grid-cols-1 gap-4 transition-all duration-700 sm:grid-cols-2 md:grid-cols-3 ${
+                  className={`grid grid-cols-1 gap-5 transition-all duration-700 sm:grid-cols-2 xl:grid-cols-3 ${
                     snapshotAnimating
                       ? "scale-[0.995] opacity-70"
                       : "scale-100 opacity-100"
@@ -2656,20 +2656,31 @@ function DataCard({
   const outOfRange = isValueOutOfPhysicalRange(sensorKey, value);
 
   return (
-    <div className="rounded-xl border bg-gray-50 p-5">
-      <p className="text-sm font-medium leading-6 text-gray-500">
-        {meta.label}
-      </p>
-      <div className="mt-3 flex items-end gap-2">
+    <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
+      {/* top accent */}
+      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 opacity-80" />
+
+      <div className="flex items-start justify-between gap-3">
+        <p className="pr-3 text-sm font-medium leading-6 text-slate-600">
+          {meta.label}
+        </p>
+
+        <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+          {meta.shortLabel}
+        </span>
+      </div>
+
+      <div className="mt-8 flex items-end gap-2">
         <p
-          className={`text-3xl font-bold tracking-tight ${
-            outOfRange ? "text-red-600" : "text-gray-900"
+          className={`text-4xl font-bold tracking-tight ${
+            outOfRange ? "text-red-600" : "text-slate-900"
           }`}
         >
           {roundValue(value)}
         </p>
+
         {meta.unit ? (
-          <span className="pb-1 text-sm font-medium text-gray-500">
+          <span className="pb-1 text-sm font-medium text-slate-500">
             {meta.unit}
           </span>
         ) : null}
