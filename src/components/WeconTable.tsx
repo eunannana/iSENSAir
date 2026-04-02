@@ -860,9 +860,7 @@ export default function WeconTable({ initialArea }: Props) {
   useEffect(() => {
     const interval = setInterval(() => {
       if (document.hidden) return;
-      const today = getTodayInMalaysia();
       fetchLatestSnapshot();
-      fetchSevenDayAIHistory();
     }, 60000);
 
     return () => clearInterval(interval);
@@ -971,9 +969,27 @@ export default function WeconTable({ initialArea }: Props) {
     return assessOverallWaterQuality(displayedSnapshotRow);
   }, [displayedSnapshotRow]);
 
+  const historicalAssessment = useMemo(() => {
+    if (aiWindowRows.length === 0) {
+      return {
+        className: "N/A",
+        status: "Unavailable",
+        description: "No 7-day historical data available for classification.",
+        colorClass: "text-gray-600",
+        badgeClass: "border-gray-200 bg-gray-50 text-gray-600",
+        explanation: "Waiting for sufficient historical data.",
+        dominantReason: "No data",
+        drivers: [],
+        convertedNH3N: null,
+      };
+    }
+    const lastHourlyRow = aiWindowRows[aiWindowRows.length - 1];
+    return assessOverallWaterQuality(lastHourlyRow);
+  }, [aiWindowRows]);
+
   const aiHistoricalSummary = useMemo(() => {
-    return buildHistoricalSummary(aiWindowRows, latestRow, latestAssessment);
-  }, [aiWindowRows, latestRow, latestAssessment]);
+    return buildHistoricalSummary(aiWindowRows, null, historicalAssessment);
+  }, [aiWindowRows, historicalAssessment]);
 
   const confidencePercentage = useMemo(() => {
     if (typeof aiDecision?.confidenceScore === "number") {
@@ -1052,7 +1068,7 @@ export default function WeconTable({ initialArea }: Props) {
         aiHistoricalSummary,
       );
     }
-  }, [latestRow, aiWindowRows, latestAssessment, aiHistoricalSummary]);
+  }, [aiWindowRows, aiHistoricalSummary]);
 
   useEffect(() => {
     if (displayedSnapshotRow) {
