@@ -253,7 +253,7 @@ export default function MapSelector({ onSelect }: Props) {
 
   return (
     <section className="w-full">
-      <div className="mx-auto max-w-6xl px-4 md:px-6">
+      <div className="mx-auto w-full max-w-[1500px] px-4 md:px-6">
         <div className="mb-6 text-center">
           <h2 className="text-2xl font-bold tracking-tight text-gray-800 md:text-3xl">
             Select Monitoring Area
@@ -359,19 +359,19 @@ export default function MapSelector({ onSelect }: Props) {
           <div className="flex flex-wrap gap-4 border-t bg-gray-50 px-6 py-4 text-sm text-gray-600">
             <span className="inline-flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded-full bg-emerald-500" />
-              Low
+              Low Risk
             </span>
             <span className="inline-flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded-full bg-amber-500" />
-              Moderate
+              Moderate Risk
             </span>
             <span className="inline-flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded-full bg-orange-500" />
-              High
+              High Risk
             </span>
             <span className="inline-flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded-full bg-red-500" />
-              Critical
+              Critical Risk
             </span>
             <span className="inline-flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded-full bg-gray-400" />

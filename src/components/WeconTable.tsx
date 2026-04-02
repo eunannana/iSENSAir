@@ -1485,130 +1485,139 @@ export default function WeconTable({ initialArea }: Props) {
       {loadingInitial ? null : (
         <div className="mt-6 space-y-8">
           {errorMsg && (
-            <div className="mx-auto max-w-6xl px-4">
+            <div className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
               <div className="mb-4 rounded-xl bg-red-100 p-3 text-red-800">
                 {errorMsg}
               </div>
             </div>
           )}
 
-          {dailyData && (
-            <div className="mx-auto max-w-6xl px-4">
-              <div className="rounded-2xl border bg-white p-6 shadow-sm">
-                {/* HEADER */}
-                <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
-                      <span className="h-2 w-2 rounded-full bg-blue-500" />
-                      Daily Water Quality Summary
-                    </h2>
+          {(dailyData || latestRow) && (
+            <section className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
+              <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+                {dailyData && (
+                  <div className="xl:col-span-4">
+                    <div className="h-full rounded-2xl border bg-white p-5 shadow-sm">
+                      {/* HEADER */}
+                      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+                            <span className="h-2 w-2 rounded-full bg-blue-500" />
+                            Daily Water Quality Summary
+                          </h2>
 
-                    <p className="mt-1 text-sm text-gray-500">
-                      Daily aggregated water quality assessment based on daily
-                      average readings
-                    </p>
+                          <p className="mt-1 text-sm text-gray-500">
+                            Daily aggregated water quality assessment based on daily
+                            average readings
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* MINI STATUS */}
+                      <div className="rounded-2xl border bg-gray-50 p-5">
+                        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
+                          Daily Classification
+                        </p>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <span
+                            className={`text-xl font-semibold ${dailyAssessment.colorClass}`}
+                          >
+                            Class {dailyAssessment.className}
+                          </span>
+
+                          <span
+                            className={`rounded-full border px-3 py-1 text-xs font-semibold ${dailyAssessment.badgeClass}`}
+                          >
+                            {dailyAssessment.status}
+                          </span>
+                        </div>
+
+                        {/* EXPLANATION */}
+                        <div className="mt-4 border-t pt-4">
+                          <p className="text-sm leading-6 text-gray-700">
+                            {dailyAssessment.explanation}
+                          </p>
+                        </div>
+
+                        <div className="mt-4 border-t pt-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
+                            Daily AI Insight
+                          </p>
+
+                          {loadingQuickInsight ? (
+                            <p className="mt-2 text-sm leading-6 text-gray-400">
+                              Generating AI insight...
+                            </p>
+                          ) : (
+                            <p className="mt-2 text-sm leading-7 text-gray-700">
+                              {aiQuickInsight ||
+                                buildQuickInsightFallback(
+                                  aiInsight,
+                                  dailyAssessment,
+                                )}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* MINI STATUS */}
-                <div className="rounded-2xl border bg-gray-50 p-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
-                    Daily Classification
-                  </p>
+                {latestRow && (
+                  <div className="xl:col-span-8">
+                    <div className="h-full rounded-2xl border bg-white p-5 shadow-sm">
+                      {/* HEADER */}
+                      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+                            <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                            Real-Time Water Quality Assessment
+                          </h2>
 
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span
-                      className={`text-xl font-semibold ${dailyAssessment.colorClass}`}
-                    >
-                      Class {dailyAssessment.className}
-                    </span>
+                          <p className="mt-1 text-sm text-gray-500">
+                            Live monitoring of key water quality parameters in the
+                            selected area
+                          </p>
+                        </div>
 
-                    <span
-                      className={`rounded-full border px-3 py-1 text-xs font-semibold ${dailyAssessment.badgeClass}`}
-                    >
-                      {dailyAssessment.status}
-                    </span>
+                        {/* TIME */}
+                        <span
+                          className={`whitespace-nowrap text-sm text-gray-500 transition-all duration-500 ${
+                            snapshotAnimating ? "text-blue-600 opacity-90" : ""
+                          }`}
+                        >
+                          {formatDisplayDateTime(currentDisplayTime)}
+                          {refreshingLatest ? " · Refreshing..." : ""}
+                        </span>
+                      </div>
+
+                      {/* SENSOR GRID */}
+                      <div
+                        className={`grid grid-cols-1 gap-5 rounded-2xl border border-slate-100 bg-white/60 p-1 transition-all duration-700 ease-out sm:grid-cols-2 2xl:grid-cols-3 ${
+                          snapshotAnimating
+                            ? "scale-[0.985] translate-y-0.5 opacity-75 shadow-inner"
+                            : "scale-100 translate-y-0 opacity-100 shadow-sm"
+                        }`}
+                      >
+                        {SENSOR_KEYS.map((key) => (
+                          <DataCard
+                            key={key}
+                            sensorKey={key}
+                            value={displayedSnapshotRow?.[key]}
+                            roundValue={roundValue}
+                          />
+                        ))}
+                      </div>
+                    </div>
                   </div>
-
-                  {/* EXPLANATION */}
-                  <div className="mt-4 border-t pt-4">
-                    <p className="text-sm leading-6 text-gray-700">
-                      {dailyAssessment.explanation}
-                    </p>
-                  </div>
-
-                  <div className="mt-4 border-t pt-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
-                      Daily AI Insight
-                    </p>
-
-                    {loadingQuickInsight ? (
-                      <p className="mt-2 text-sm leading-6 text-gray-400">
-                        Generating AI insight...
-                      </p>
-                    ) : (
-                      <p className="mt-2 text-sm leading-7 text-gray-700">
-                        {aiQuickInsight ||
-                          buildQuickInsightFallback(aiInsight, dailyAssessment)}
-                      </p>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
-            </div>
+            </section>
           )}
 
           {latestRow && (
-            <div className="mx-auto max-w-6xl px-4">
-              <div className="rounded-2xl border bg-white p-6 shadow-sm">
-                {/* HEADER */}
-                <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
-                      <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                      Real-Time Water Quality Assessment
-                    </h2>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      Live monitoring of key water quality parameters in the
-                      selected area
-                    </p>
-                  </div>
-
-                  {/* TIME */}
-                  <span
-                    className={`whitespace-nowrap text-sm text-gray-500 transition-all duration-500 ${
-                      snapshotAnimating ? "text-blue-600 opacity-90" : ""
-                    }`}
-                  >
-                    {formatDisplayDateTime(currentDisplayTime)}
-                    {refreshingLatest ? " · Refreshing..." : ""}
-                  </span>
-                </div>
-
-                {/* SENSOR GRID */}
-                <div
-                  className={`grid grid-cols-1 gap-5 rounded-2xl border border-slate-100 bg-white/60 p-1 transition-all duration-700 ease-out sm:grid-cols-2 xl:grid-cols-3 ${
-                    snapshotAnimating
-                      ? "scale-[0.985] translate-y-0.5 opacity-75 shadow-inner"
-                      : "scale-100 translate-y-0 opacity-100 shadow-sm"
-                  }`}
-                >
-                  {SENSOR_KEYS.map((key) => (
-                    <DataCard
-                      key={key}
-                      sensorKey={key}
-                      value={displayedSnapshotRow?.[key]}
-                      roundValue={roundValue}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {latestRow && (
-            <div className="mx-auto max-w-6xl px-4">
+            <div className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
               <div
                 className={`rounded-2xl border p-6 shadow-sm ${heroStyles.shell}`}
               >
@@ -1732,7 +1741,7 @@ export default function WeconTable({ initialArea }: Props) {
               </div>
             </div>
           )}
-          <div className="mx-auto max-w-6xl px-4">
+          <div className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
             <div className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
                 <div>
@@ -1860,7 +1869,7 @@ export default function WeconTable({ initialArea }: Props) {
             </div>
           </div>
 
-          <div className="mx-auto max-w-6xl px-4">
+          <div className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
             <div className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
                 <div>

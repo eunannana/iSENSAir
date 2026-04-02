@@ -125,7 +125,7 @@ export default function Page() {
             </>
           ) : (
             <section className="py-8">
-              <div className="mx-auto max-w-6xl space-y-6 px-4">
+              <div className="mx-auto w-full max-w-[1500px] space-y-6 px-4 lg:px-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <button
                     onClick={() => setSelectedArea(null)}
@@ -153,7 +153,7 @@ export default function Page() {
       {showBackToTop && (
         <button
           onClick={scrollToTop}
-          className="fixed bottom-6 right-6 z-50 cursor-pointer rounded-full bg-blue-600 p-3 text-white shadow-lg transition hover:bg-blue-700 active:scale-95"
+          className="fixed bottom-6 right-6 z-[1200] cursor-pointer rounded-full bg-blue-600 p-3 text-white shadow-lg transition hover:bg-blue-700 active:scale-95"
           title="Back to top"
         >
           ⬆️

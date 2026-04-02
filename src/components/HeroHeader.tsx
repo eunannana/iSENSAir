@@ -24,7 +24,7 @@ export default function HeroHeader({ onScrollToMap }: HeroHeaderProps) {
       <div className="absolute inset-0 bg-white/84 backdrop-blur-[2px]" />
 
       {/* Content */}
-      <div className="relative mx-auto flex h-screen w-full max-w-7xl flex-col items-center justify-center px-4 py-12 text-center md:px-6 md:py-16">
+      <div className="relative mx-auto flex h-screen w-full max-w-[1500px] flex-col items-center justify-center px-4 py-12 text-center md:px-6 md:py-16">
         {/* Logo */}
         <div className="mx-auto w-full max-w-2xl">
           <Image
@@ -37,12 +37,15 @@ export default function HeroHeader({ onScrollToMap }: HeroHeaderProps) {
           />
         </div>
 
-        <h1 className="mt-6 text-center text-3xl font-extrabold leading-tight tracking-tight text-gray-800 sm:text-4xl lg:text-5xl">
-          <span className="block whitespace-nowrap">
+        <h1
+          className="mx-auto mt-6 max-w-[1100px] text-center font-extrabold leading-[1.08] tracking-tight text-gray-800"
+          style={{ fontSize: "clamp(1.55rem, 4vw, 3.2rem)" }}
+        >
+          <span className="block text-balance">
             SMART RIVER WATER QUALITY MONITORING
           </span>
 
-          <span className="block whitespace-nowrap">
+          <span className="mt-1 block text-balance">
             AI-DRIVEN DECISION SUPPORT
           </span>
         </h1>
