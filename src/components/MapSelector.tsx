@@ -139,7 +139,7 @@ function getMarkerColor(riskLevel?: string, isActive = true): string {
   }
 }
 
-function createPinIcon(color: string, isActive = true) {
+function createPinIcon(color: string, isActive = true, isLoading = false) {
   const shadowOpacity = isActive ? 0.4 : 0.18;
   const pinOpacity = isActive ? 1 : 0.55;
   const badge = isActive
@@ -149,6 +149,15 @@ function createPinIcon(color: string, isActive = true) {
       <path d="M24 7.8V11.8" stroke="white" stroke-width="1.4" stroke-linecap="round" />
       <circle cx="24" cy="13.2" r="0.9" fill="white" />
     `;
+  const loadingPulse = isLoading
+    ? `
+      <circle cx="24" cy="10" r="3.5" fill="#3b82f6" opacity="0.95" />
+      <circle cx="24" cy="10" r="4.5" stroke="#3b82f6" stroke-width="1.2" fill="none" opacity="0.7">
+        <animate attributeName="r" values="4.5;8.5;4.5" dur="1.2s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.7;0.05;0.7" dur="1.2s" repeatCount="indefinite" />
+      </circle>
+    `
+    : "";
 
   const svg = `
     <svg width="30" height="42" viewBox="0 0 30 42" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -161,6 +170,7 @@ function createPinIcon(color: string, isActive = true) {
       <path d="M15 41C15 41 28 27.5 28 16C28 7.71573 22.2843 2 15 2C7.71573 2 2 7.71573 2 16C2 27.5 15 41 15 41Z" fill="${color}" opacity="${pinOpacity}" stroke="white" stroke-width="2"/>
       <circle cx="15" cy="16" r="5" fill="white" opacity="${isActive ? 1 : 0.9}"/>
       ${badge}
+      ${loadingPulse}
     </svg>
   `;
 
@@ -178,6 +188,7 @@ export default function MapSelector({ onSelect }: Props) {
   const [mapSummary, setMapSummary] = useState<Record<string, MapSummaryItem>>(
     {}
   );
+  const [loadingByLocation, setLoadingByLocation] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetchSupportedLocations()
@@ -195,6 +206,10 @@ export default function MapSelector({ onSelect }: Props) {
     async function loadSummaries() {
       const summary: Record<string, MapSummaryItem> = {};
 
+      setLoadingByLocation(
+        Object.fromEntries(locations.map((loc) => [loc.name, true])),
+      );
+
       for (const loc of locations) {
         try {
           const latest = await fetchLatestData(loc.name);
@@ -211,6 +226,8 @@ export default function MapSelector({ onSelect }: Props) {
             statusLabel: hasTodayData ? "Active" : "Inactive",
             lastUpdatedLabel: formatLastUpdated(latestTimestamp),
           };
+
+          setLoadingByLocation((prev) => ({ ...prev, [loc.name]: false }));
         } catch (err) {
           console.error(`Map summary error for ${loc.name}:`, err);
           summary[loc.name] = {
@@ -221,6 +238,8 @@ export default function MapSelector({ onSelect }: Props) {
             statusLabel: "Inactive",
             lastUpdatedLabel: "No recent data",
           };
+
+          setLoadingByLocation((prev) => ({ ...prev, [loc.name]: false }));
         }
       }
 
@@ -282,6 +301,7 @@ export default function MapSelector({ onSelect }: Props) {
 
             {locations.map((loc) => {
               const summary = mapSummary[loc.name];
+              const isLoading = loadingByLocation[loc.name] ?? false;
               const riskLevel = summary?.riskLevel ?? "Unknown";
               const overallClass = summary?.overallClass ?? "-";
               const isActive = summary?.isActive ?? true;
@@ -291,9 +311,12 @@ export default function MapSelector({ onSelect }: Props) {
                 <Marker
                   key={loc.name}
                   position={[loc.lat, loc.lng]}
-                  icon={createPinIcon(getMarkerColor(riskLevel, isActive), isActive)}
+                  icon={createPinIcon(getMarkerColor(riskLevel, isActive), isActive, isLoading)}
                   eventHandlers={{
-                    click: () => onSelect(loc.name),
+                    click: () => {
+                      if (isLoading) return;
+                      onSelect(loc.name);
+                    },
                   }}
                 >
                   <Tooltip
@@ -307,16 +330,20 @@ export default function MapSelector({ onSelect }: Props) {
                         <div className="font-medium text-gray-800">{loc.label}</div>
                         <span
                           className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${
-                            isActive
+                            isLoading
+                              ? "bg-blue-50 text-blue-700"
+                              : isActive
                               ? "bg-emerald-50 text-emerald-700"
                               : "bg-red-50 text-red-700"
                           }`}
                         >
-                          {statusLabel}
+                          {isLoading ? "Loading" : statusLabel}
                         </span>
                       </div>
                       <div className="text-xs text-gray-500">
-                        {isActive
+                        {isLoading
+                          ? "Fetching latest station data..."
+                          : isActive
                           ? `Class ${overallClass} · ${riskLevel}`
                           : `No data today · last update ${summary?.lastUpdatedLabel ?? "No recent data"}`}
                       </div>
@@ -349,6 +376,10 @@ export default function MapSelector({ onSelect }: Props) {
             <span className="inline-flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded-full bg-gray-400" />
               Inactive / No data today
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full bg-blue-500" />
+              Loading latest data
             </span>
           </div>
         </div>

@@ -125,9 +125,9 @@ const SENSOR_META: Record<
   Tr_Sensor: {
     label: "Turbidity",
     shortLabel: "TR",
-    unit: "mg/L",
+    unit: "NTU",
     min: 0,
-    max: 10000,
+    max: 1000,
     severityWeight: 0.95,
   },
   BOD_Sensor: {
@@ -135,7 +135,7 @@ const SENSOR_META: Record<
     shortLabel: "BOD",
     unit: "mg/L",
     min: 0,
-    max: 1000,
+    max: 100,
     severityWeight: 1.35,
   },
   DO_Sensor: {
@@ -151,7 +151,7 @@ const SENSOR_META: Record<
     shortLabel: "COD",
     unit: "mg/L",
     min: 0,
-    max: 2000,
+    max: 500,
     severityWeight: 1.3,
   },
   NH_Sensor: {
@@ -159,7 +159,7 @@ const SENSOR_META: Record<
     shortLabel: "NH3",
     unit: "mg/L",
     min: 0,
-    max: 1000,
+    max: 50,
     severityWeight: 1.45,
   },
   TDS_Sensor: {
@@ -167,7 +167,7 @@ const SENSOR_META: Record<
     shortLabel: "TDS",
     unit: "mg/L",
     min: 0,
-    max: 100000,
+    max: 2000,
     severityWeight: 0.8,
   },
   CT_Sensor: {
@@ -175,15 +175,15 @@ const SENSOR_META: Record<
     shortLabel: "CT",
     unit: "µS/cm",
     min: 0,
-    max: 200000,
+    max: 5000,
     severityWeight: 0.85,
   },
   ORP_Sensor: {
     label: "Oxidation Reduction Potential",
     shortLabel: "ORP",
     unit: "mV",
-    min: -2000,
-    max: 2000,
+    min: -500,
+    max: 500,
     severityWeight: 0.75,
   },
   pH_Sensor: {
@@ -1620,29 +1620,47 @@ export default function WeconTable({ initialArea }: Props) {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-center gap-3">
-                    <span
-                      className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${getClassBadgeClass(
-                        latestAssessment.className,
-                      )}`}
-                    >
-                      Class {latestAssessment.className}
-                    </span>
+                    {loadingAIDecision ? (
+                      <>
+                        <span className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-1.5 text-sm font-semibold text-indigo-700">
+                          Generating class...
+                        </span>
 
-                    <span
-                      className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${getRiskBadgeClass(
-                        activeRiskLevel,
-                      )}`}
-                    >
-                      {activeRiskLevel} Risk
-                    </span>
+                        <span className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-1.5 text-sm font-semibold text-indigo-700">
+                          Generating risk...
+                        </span>
 
-                    <span
-                      className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${getConfidenceBadgeClass(
-                        confidencePercentage,
-                      )}`}
-                    >
-                      Confidence {confidencePercentage}%
-                    </span>
+                        <span className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-1.5 text-sm font-semibold text-indigo-700">
+                          Generating confidence...
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span
+                          className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${getClassBadgeClass(
+                            latestAssessment.className,
+                          )}`}
+                        >
+                          Class {latestAssessment.className}
+                        </span>
+
+                        <span
+                          className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${getRiskBadgeClass(
+                            activeRiskLevel,
+                          )}`}
+                        >
+                          {activeRiskLevel} Risk
+                        </span>
+
+                        <span
+                          className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${getConfidenceBadgeClass(
+                            confidencePercentage,
+                          )}`}
+                        >
+                          Confidence {confidencePercentage}%
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1653,7 +1671,9 @@ export default function WeconTable({ initialArea }: Props) {
                   </p>
 
                   <p className="mt-3 text-sm leading-8 text-gray-700 md:text-base">
-                    {loadingAIHistory
+                    {loadingAIDecision
+                      ? "Generating AI decision support..."
+                      : loadingAIHistory
                       ? "Analyzing historical river condition..."
                       : aiDecision?.executiveSummary ||
                         buildCombinedHistoricalSummary(
@@ -1668,7 +1688,9 @@ export default function WeconTable({ initialArea }: Props) {
                   <HeroMetricCard
                     title="Likely Main Contributors"
                     value={
-                      aiDecision?.mainContributorSummary || likelyContributor
+                      loadingAIDecision
+                        ? "Generating contributor summary..."
+                        : aiDecision?.mainContributorSummary || likelyContributor
                     }
                     hint={`Dominant parameters over the last ${AI_WINDOW_DAYS} days`}
                   />
@@ -1676,9 +1698,11 @@ export default function WeconTable({ initialArea }: Props) {
                   <HeroMetricCard
                     title="Predicted Source of Pollution"
                     value={
-                      aiDecision?.predictedSourceOfPollution ||
-                      aiHistoricalSummary.primarySource?.source ||
-                      "Potential mixed-source pollution"
+                      loadingAIDecision
+                        ? "Generating source hypothesis..."
+                        : aiDecision?.predictedSourceOfPollution ||
+                          aiHistoricalSummary.primarySource?.source ||
+                          "Potential mixed-source pollution"
                     }
                     hint="Historical pollution source hypothesis"
                   />
@@ -1686,8 +1710,10 @@ export default function WeconTable({ initialArea }: Props) {
                   <HeroMetricCard
                     title="Recommended Action"
                     value={
-                      aiDecision?.recommendedAction ||
-                      buildRecommendedActionFallback(aiHistoricalSummary)
+                      loadingAIDecision
+                        ? "Generating recommended action..."
+                        : aiDecision?.recommendedAction ||
+                          buildRecommendedActionFallback(aiHistoricalSummary)
                     }
                     hint={`Primary response based on the ${AI_WINDOW_DAYS}-day pattern`}
                   />
@@ -2780,12 +2806,25 @@ function DataCard({
   roundValue: (val: any) => string;
 }) {
   const meta = SENSOR_META[sensorKey];
-  const outOfRange = isValueOutOfPhysicalRange(sensorKey, value);
+  const numericValue = Number(value);
+  const isInactive =
+    value !== null && value !== undefined && value !== "" &&
+    Number.isFinite(numericValue) &&
+    numericValue === 0;
+  const outOfRange = !isInactive && isValueOutOfPhysicalRange(sensorKey, value);
 
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
       {/* top accent */}
-      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 opacity-80" />
+      <div
+        className={`absolute inset-x-0 top-0 h-1 opacity-80 ${
+          isInactive
+            ? "bg-gradient-to-r from-slate-400 via-slate-500 to-slate-600"
+            : outOfRange
+            ? "bg-gradient-to-r from-amber-500 via-orange-500 to-red-500"
+            : "bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"
+        }`}
+      />
 
       <div className="flex items-start justify-between gap-3">
         <p className="pr-3 text-sm font-medium leading-6 text-slate-600">
@@ -2798,19 +2837,31 @@ function DataCard({
       </div>
 
       <div className="mt-8 flex items-end gap-2">
-        <p
-          className={`text-4xl font-bold tracking-tight ${
-            outOfRange ? "text-red-600" : "text-slate-900"
-          }`}
-        >
-          {roundValue(value)}
+        <p className="text-4xl font-bold tracking-tight text-slate-900">
+          <span
+            className={
+              isInactive
+                ? "text-slate-400"
+                : outOfRange
+                ? "text-red-600"
+                : "text-slate-900"
+            }
+          >
+            {isInactive ? "Inactive" : roundValue(value)}
+          </span>
         </p>
 
-        {meta.unit ? (
+        {!isInactive && meta.unit ? (
           <span className="pb-1 text-sm font-medium text-slate-500">
             {meta.unit}
           </span>
         ) : null}
+
+        {outOfRange && (
+          <span className="mb-1 inline-flex rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-red-700">
+            Out of Range
+          </span>
+        )}
       </div>
     </div>
   );
