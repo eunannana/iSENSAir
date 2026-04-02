@@ -311,6 +311,7 @@ export default function MapSelector({ onSelect }: Props) {
                 <Marker
                   key={loc.name}
                   position={[loc.lat, loc.lng]}
+                  interactive={!isLoading}
                   icon={createPinIcon(getMarkerColor(riskLevel, isActive), isActive, isLoading)}
                   eventHandlers={{
                     click: () => {

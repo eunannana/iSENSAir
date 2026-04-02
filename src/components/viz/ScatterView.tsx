@@ -151,7 +151,11 @@ function _ScatterView({ rows, schema }: Props) {
 
             <Tooltip isAnimationActive={false} />
 
-            <Scatter data={data} fill="#2563eb" />
+            <Scatter
+              data={data}
+              fill="#2563eb"
+              isAnimationActive={false}
+            />
           </ScatterChart>
         </ResponsiveContainer>
       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import isoWeek from "dayjs/plugin/isoWeek";
 import {
@@ -19,9 +19,11 @@ dayjs.extend(isoWeek);
 type Props = {
   rows: Record<string, unknown>[];
   schema: Record<string, string>;
+  rangeStart?: string;
+  rangeEnd?: string;
 };
 
-type Agg = "all" | "daily" | "weekly" | "monthly";
+type Agg = "all" | "hourly" | "daily" | "weekly";
 
 /* ==============================
    PARAMETER SENSOR YANG DIPAKAI
@@ -70,6 +72,8 @@ function formatBucket(bucket: string, agg: Agg): string {
   switch (agg) {
     case "all":
       return bucket; // raw time string already
+    case "hourly":
+      return dayjs(bucket, "YYYY-MM-DD HH:mm").format("YYYY-MM-DD HH:mm");
     case "daily":
       // bucket is already YYYY-MM-DD
       return dayjs(bucket).format("YYYY-MM-DD");
@@ -81,10 +85,6 @@ function formatBucket(bucket: string, agg: Agg): string {
         .startOf("isoWeek");
       const end = start.endOf("isoWeek");
       return `${start.format("YYYY-MM-DD")} – ${end.format("YYYY-MM-DD")}`;
-    }
-    case "monthly": {
-      const date = dayjs(bucket + "-01");
-      return date.format("MMMM YYYY");
     }
   }
 }
@@ -130,11 +130,10 @@ function buildSeries(
   for (const x of cleaned) {
     let key = "";
 
+    if (agg === "hourly") key = x.t.format("YYYY-MM-DD HH:00");
     if (agg === "daily") key = x.t.format("YYYY-MM-DD");
     if (agg === "weekly")
       key = `${x.t.year()}-W${x.t.isoWeek()}`;
-    if (agg === "monthly")
-      key = x.t.format("YYYY-MM");
 
     if (!map.has(key)) map.set(key, { values: [] });
     map.get(key)!.values.push(x.v);
@@ -154,6 +153,8 @@ function buildSeries(
 export default function TrendView({
   rows,
   schema,
+  rangeStart,
+  rangeEnd,
 }: Props) {
   const timeKey =
     Object.entries(schema).find(
@@ -164,6 +165,42 @@ export default function TrendView({
     useState<string>("__all__");
   const [agg, setAgg] =
     useState<Agg>("all");
+
+  const rangeMetrics = useMemo(() => {
+    if (!rangeStart || !rangeEnd) {
+      return { rangeDays: 0 };
+    }
+
+    const start = dayjs(rangeStart, "YYYY-MM-DD", true);
+    const end = dayjs(rangeEnd, "YYYY-MM-DD", true);
+
+    if (!start.isValid() || !end.isValid()) {
+      return { rangeDays: 0 };
+    }
+
+    const minDate = start.isBefore(end) ? start : end;
+    const maxDate = start.isBefore(end) ? end : start;
+    const rangeDays = maxDate.diff(minDate, "day") + 1;
+
+    return { rangeDays };
+  }, [rangeStart, rangeEnd]);
+
+  const canUseDaily = rangeMetrics.rangeDays >= 2;
+  const canUseWeekly = rangeMetrics.rangeDays >= 7;
+
+  useEffect(() => {
+    const disallowedSelection =
+      (agg === "daily" && !canUseDaily) ||
+      (agg === "weekly" && !canUseWeekly);
+
+    if (disallowedSelection) {
+      setAgg("all");
+    }
+  }, [
+    canUseDaily,
+    canUseWeekly,
+    agg,
+  ]);
 
   return (
     <div>
@@ -208,14 +245,17 @@ export default function TrendView({
               <option value="all">
                 All time
               </option>
-              <option value="daily">
+              <option
+                value="hourly"
+                disabled={false}
+              >
+                Hourly
+              </option>
+              <option value="daily" disabled={!canUseDaily}>
                 Daily
               </option>
-              <option value="weekly">
+              <option value="weekly" disabled={!canUseWeekly}>
                 Weekly
-              </option>
-              <option value="monthly">
-                Monthly
               </option>
             </select>
           </div>
@@ -332,6 +372,7 @@ function SingleChart({
               dot={false}
               strokeWidth={2}
               stroke={color}
+              isAnimationActive={false}
             />
           </LineChart>
         </ResponsiveContainer>

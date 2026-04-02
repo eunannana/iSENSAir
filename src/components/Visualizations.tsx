@@ -15,6 +15,8 @@ const ScatterView = dynamic(() => import("./viz/ScatterView"), {
 type Props = {
   rows: Record<string, unknown>[];
   schema: Record<string, string>;
+  rangeStart?: string;
+  rangeEnd?: string;
 };
 
 const TABS = [
@@ -23,7 +25,12 @@ const TABS = [
   { key: "scatter", label: "Scatter Plot" },
 ] as const;
 
-export default function Visualizations({ rows, schema }: Props) {
+export default function Visualizations({
+  rows,
+  schema,
+  rangeStart,
+  rangeEnd,
+}: Props) {
   const [active, setActive] =
     useState<(typeof TABS)[number]["key"]>("trend");
 
@@ -59,7 +66,12 @@ export default function Visualizations({ rows, schema }: Props) {
 
       <div className="mt-6">
         {active === "trend" && (
-          <TrendView rows={rows} schema={schema} />
+          <TrendView
+            rows={rows}
+            schema={schema}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+          />
         )}
         {active === "hist" && (
           <HistogramView rows={rows} schema={schema} />

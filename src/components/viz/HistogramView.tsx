@@ -177,10 +177,11 @@ export default function HistogramView({ rows, schema }: Props) {
                   offset: 10,
                 }}
               />
-              <Tooltip />
+              <Tooltip isAnimationActive={false} />
               <Bar
                 dataKey="freq"
                 fill={colorMap[col] || "#2563eb"}
+                isAnimationActive={false}
               />
             </BarChart>
           </ResponsiveContainer>
@@ -209,10 +210,11 @@ export default function HistogramView({ rows, schema }: Props) {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="bin" tick={{ fontSize: 11 }} />
                       <YAxis tick={{ fontSize: 11 }} />
-                      <Tooltip />
+                      <Tooltip isAnimationActive={false} />
                       <Bar
                         dataKey="freq"
                         fill={colorMap[k] || "#2563eb"}
+                        isAnimationActive={false}
                       />
                     </BarChart>
                   </ResponsiveContainer>

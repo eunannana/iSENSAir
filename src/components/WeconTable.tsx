@@ -6,7 +6,6 @@ import LoadingScreen from "@/components/LoadingScreen";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { getAIInsightSummary } from "@/lib/aiInsights";
-import { getNWQSResult } from "@/lib/nwqs";
 import {
   fetchLatestData,
   fetchDataByDateRange,
@@ -98,6 +97,7 @@ type RowData = Record<string, any>;
 const AI_WINDOW_DAYS = 7;
 const AI_MAX_ROWS = 168;
 const REALTIME_ROTATION_MS = 120000;
+const MAX_VISUALIZATION_RANGE_DAYS = 14;
 
 const SENSOR_KEYS = [
   "Tr_Sensor",
@@ -496,6 +496,22 @@ export default function WeconTable({ initialArea }: Props) {
     return formatter.format(new Date());
   }
 
+  function isSameMalaysiaDay(timestamp: string, reference: Date = new Date()) {
+    if (!timestamp) return false;
+
+    const parsed = new Date(timestamp);
+    if (Number.isNaN(parsed.getTime())) return false;
+
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kuala_Lumpur",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+
+    return formatter.format(parsed) === formatter.format(reference);
+  }
+
   function shiftDate(dateString: string, diffDays: number) {
     const [year, month, day] = dateString.split("-").map(Number);
     const d = new Date(year, month - 1, day);
@@ -507,8 +523,56 @@ export default function WeconTable({ initialArea }: Props) {
     return `${yyyy}-${mm}-${dd}`;
   }
 
+  function handleStartDateChange(nextStart: string) {
+    setStart(nextStart);
+
+    if (!nextStart) return;
+
+    const maxEnd = shiftDate(nextStart, MAX_VISUALIZATION_RANGE_DAYS - 1);
+    setEnd((currentEnd) => {
+      if (!currentEnd) return maxEnd;
+
+      const currentEndDate = new Date(`${currentEnd}T00:00:00`);
+      const startDate = new Date(`${nextStart}T00:00:00`);
+      const maxEndDate = new Date(`${maxEnd}T00:00:00`);
+
+      if (currentEndDate < startDate || currentEndDate > maxEndDate) {
+        return maxEnd;
+      }
+
+      return currentEnd;
+    });
+  }
+
+  function handleEndDateChange(nextEnd: string) {
+    setEnd(nextEnd);
+
+    if (!nextEnd || !start) return;
+
+    const startDate = new Date(`${start}T00:00:00`);
+    const nextEndDate = new Date(`${nextEnd}T00:00:00`);
+
+    if (nextEndDate < startDate) {
+      setStart(nextEnd);
+    }
+  }
+
   async function fetchHistorical(fetchStart: string, fetchEnd: string) {
     if (!fetchStart || !fetchEnd) return;
+
+    const startDate = new Date(`${fetchStart}T00:00:00`);
+    const endDate = new Date(`${fetchEnd}T00:00:00`);
+    const minDate = startDate <= endDate ? startDate : endDate;
+    const maxDate = startDate <= endDate ? endDate : startDate;
+    const diffMs = maxDate.getTime() - minDate.getTime();
+    const rangeDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+
+    if (rangeDays > MAX_VISUALIZATION_RANGE_DAYS) {
+      setErrorMsg(
+        `Date range cannot exceed ${MAX_VISUALIZATION_RANGE_DAYS} days. Please select a shorter range.`,
+      );
+      return;
+    }
 
     setLoadingHistorical(true);
     setErrorMsg(null);
@@ -962,13 +1026,18 @@ export default function WeconTable({ initialArea }: Props) {
   }, [area]);
 
   useEffect(() => {
+    const latestTs = latestData[0]?.Timestamp;
+    if (!latestTs || !isSameMalaysiaDay(latestTs)) {
+      return;
+    }
+
     const interval = setInterval(() => {
       if (document.hidden) return;
       fetchLatestSnapshot();
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [area]);
+  }, [area, latestData]);
 
   useEffect(() => {
     const clockInterval = setInterval(() => {
@@ -1008,6 +1077,12 @@ export default function WeconTable({ initialArea }: Props) {
     });
   }, [data, sortAsc]);
 
+  const visualizationRows = useMemo(() => {
+    return [...sortedData].sort(
+      (a, b) => parseTimestamp(a.Timestamp) - parseTimestamp(b.Timestamp),
+    );
+  }, [sortedData]);
+
   const aiWindowRows = useMemo(() => {
     const filtered = [...aiHistoryRows].filter(hasValidSensorData);
 
@@ -1017,6 +1092,12 @@ export default function WeconTable({ initialArea }: Props) {
   const latestRow = useMemo(() => {
     return latestData.length ? latestData[0] : null;
   }, [latestData]);
+
+  const hasRealtimeData = useMemo(() => {
+    const timestamp = latestRow?.Timestamp;
+    if (!timestamp) return false;
+    return isSameMalaysiaDay(timestamp);
+  }, [latestRow?.Timestamp]);
 
   const latestSnapshotRows = useMemo(() => {
     const merged = [...latestData, ...sortedData];
@@ -1178,16 +1259,16 @@ export default function WeconTable({ initialArea }: Props) {
     return "Not identified";
   }, [aiDecision?.dominantDrivers, aiHistoricalSummary.topDrivers]);
 
-  const exceedanceIndicators = useMemo(() => {
-    if (!latestRow) return [];
+  const visualizationDriverSummaries = useMemo(() => {
+    if (!visualizationRows.length) return [];
 
-    return SENSOR_KEYS.map((key) => getNWQSResult(key as any, latestRow[key]))
-      .filter((item) => item.className === "IV" || item.className === "V")
-      .slice(0, 6);
-  }, [latestRow]);
+    return SENSOR_KEYS.map((key) => buildDriverSummary(visualizationRows, key))
+      .filter((item) => item.latest !== null || item.average !== null)
+      .sort((a, b) => b.severityScore - a.severityScore);
+  }, [visualizationRows]);
 
   const keyTrendItems = useMemo(() => {
-    return aiHistoricalSummary.topDrivers
+    return visualizationDriverSummaries
       .filter(
         (item) =>
           item.direction === "increasing" ||
@@ -1195,13 +1276,89 @@ export default function WeconTable({ initialArea }: Props) {
           item.direction === "fluctuating",
       )
       .slice(0, 5);
-  }, [aiHistoricalSummary.topDrivers]);
+  }, [visualizationDriverSummaries]);
+
+  const parameterComparisonItems = useMemo(() => {
+    if (!visualizationDriverSummaries.length) {
+      return ["No comparable parameter summary for the selected chart range."];
+    }
+
+    const topBySeverity = visualizationDriverSummaries[0];
+    const topByAverage = [...visualizationDriverSummaries]
+      .filter((item) => item.average !== null)
+      .sort((a, b) => (b.average || 0) - (a.average || 0))[0];
+    const widestSpread = [...visualizationDriverSummaries]
+      .filter((item) => item.maximum !== null && item.minimum !== null)
+      .sort(
+        (a, b) =>
+          (b.maximum || 0) - (b.minimum || 0) - ((a.maximum || 0) - (a.minimum || 0)),
+      )[0];
+
+    const strongestChange = [...visualizationDriverSummaries]
+      .filter((item) => item.changePct !== null)
+      .sort((a, b) => Math.abs(b.changePct || 0) - Math.abs(a.changePct || 0))[0];
+
+    const items: string[] = [];
+
+    items.push(
+      `Highest pressure score: ${topBySeverity.label} (${topBySeverity.direction}, avg ${formatMetric(topBySeverity.average, topBySeverity.unit)}, latest ${formatMetric(topBySeverity.latest, topBySeverity.unit)}).`,
+    );
+
+    if (topByAverage) {
+      items.push(
+        `Highest average concentration: ${topByAverage.label} at ${formatMetric(topByAverage.average, topByAverage.unit)}.`,
+      );
+    }
+
+    if (widestSpread) {
+      items.push(
+        `Largest value spread: ${widestSpread.label} between ${formatMetric(widestSpread.minimum, widestSpread.unit)} and ${formatMetric(widestSpread.maximum, widestSpread.unit)}.`,
+      );
+    }
+
+    if (strongestChange) {
+      items.push(
+        `Strongest movement: ${strongestChange.label} changed ${Math.abs(strongestChange.changePct || 0).toFixed(1)}% (${strongestChange.direction}).`,
+      );
+    }
+
+    return items.slice(0, 4);
+  }, [visualizationDriverSummaries]);
+
+  const exceedanceIndicators = useMemo(() => {
+    if (!visualizationDriverSummaries.length) {
+      return [] as DriverSummary[];
+    }
+
+    return visualizationDriverSummaries
+      .filter((item) => item.exceedanceRate > 0)
+      .sort((a, b) => b.exceedanceRate - a.exceedanceRate)
+      .slice(0, 6);
+  }, [visualizationDriverSummaries]);
 
   const activeRiskLevel =
     aiDecision?.pollutionRiskLevel ||
     deriveRiskLevelFromClass(latestAssessment.className);
 
   const totalPages = Math.ceil(sortedData.length / rowsPerPage);
+
+  const isDateRangeOverLimit = useMemo(() => {
+    if (!start || !end) return false;
+
+    const startDate = new Date(`${start}T00:00:00`);
+    const endDate = new Date(`${end}T00:00:00`);
+
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return false;
+    }
+
+    const minDate = startDate <= endDate ? startDate : endDate;
+    const maxDate = startDate <= endDate ? endDate : startDate;
+    const diffMs = maxDate.getTime() - minDate.getTime();
+    const rangeDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+
+    return rangeDays > MAX_VISUALIZATION_RANGE_DAYS;
+  }, [start, end]);
 
   const paginatedData = sortedData.slice(
     (currentPage - 1) * rowsPerPage,
@@ -1469,6 +1626,8 @@ export default function WeconTable({ initialArea }: Props) {
   }
 
   const heroStyles = getHeroStyles(activeRiskLevel);
+  const isNoDataForSelectedRange =
+    errorMsg === "Data not found for the selected date range";
 
   return (
     <>
@@ -1486,13 +1645,39 @@ export default function WeconTable({ initialArea }: Props) {
         <div className="mt-6 space-y-8">
           {errorMsg && (
             <div className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
-              <div className="mb-4 rounded-xl bg-red-100 p-3 text-red-800">
-                {errorMsg}
-              </div>
+              {isNoDataForSelectedRange ? (
+                <div className="mb-4 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600">
+                        No Historical Data
+                      </p>
+                      <h3 className="mt-2 text-lg font-semibold text-amber-900">
+                        No records found for the selected date range
+                      </h3>
+                      <p className="mt-2 text-sm text-amber-800">
+                        Try selecting another range (up to {MAX_VISUALIZATION_RANGE_DAYS} days),
+                        then click Load Data again.
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-amber-800">
+                      <p className="font-semibold">Current Selection</p>
+                      <p className="mt-1">
+                        {formatDisplayDate(start)} - {formatDisplayDate(end)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mb-4 rounded-xl bg-red-100 p-3 text-red-800">
+                  {errorMsg}
+                </div>
+              )}
             </div>
           )}
 
-          {(dailyData || latestRow) && (
+          {(dailyData || hasRealtimeData) && (
             <section className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
               <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
                 {dailyData && (
@@ -1564,7 +1749,7 @@ export default function WeconTable({ initialArea }: Props) {
                   </div>
                 )}
 
-                {latestRow && (
+                {hasRealtimeData && (
                   <div className="xl:col-span-8">
                     <div className="h-full rounded-2xl border bg-white p-5 shadow-sm">
                       {/* HEADER */}
@@ -1755,68 +1940,14 @@ export default function WeconTable({ initialArea }: Props) {
                   </p>
                 </div>
 
-                <button
-                  onClick={() => setShowVisualization((prev) => !prev)}
-                  className="rounded-lg border px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
-                >
-                  {showVisualization
-                    ? "Hide Visualization"
-                    : "Show Visualization"}
-                </button>
-              </div>
-
-              <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <SmallInfoPanel
-                  title={`${AI_WINDOW_DAYS}-Day Trend Highlights`}
-                  items={
-                    keyTrendItems.length > 0
-                      ? keyTrendItems.map(
-                          (item) =>
-                            `${item.label}: ${item.direction}, avg ${formatMetric(
-                              item.average,
-                              item.unit,
-                            )}, latest ${formatMetric(item.latest, item.unit)}`,
-                        )
-                      : [
-                          `No significant ${AI_WINDOW_DAYS}-day trend shift detected.`,
-                        ]
-                  }
-                />
-
-                <SmallInfoPanel
-                  title="Parameter Comparison"
-                  items={[
-                    `Likely contributor: ${likelyContributor}`,
-                    `Risk level: ${activeRiskLevel}`,
-                    `Predicted source: ${
-                      aiDecision?.predictedSourceOfPollution ||
-                      aiHistoricalSummary.primarySource?.source ||
-                      "Potential mixed-source pollution"
-                    }`,
-                  ]}
-                />
-
-                <SmallInfoPanel
-                  title="Threshold Exceedance Indicators"
-                  items={
-                    exceedanceIndicators.length > 0
-                      ? exceedanceIndicators.map(
-                          (item: any) =>
-                            `${item.label}: Class ${item.className}`,
-                        )
-                      : ["No major threshold exceedance detected."]
-                  }
-                />
-              </div>
-
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-                <div className="flex flex-wrap items-end gap-3">
+                <div className="flex flex-wrap items-end justify-end gap-3">
                   <div className="flex flex-col">
                     <label className="mb-1 text-xs text-gray-500">Start</label>
                     <input
                       type="date"
                       value={start}
-                      onChange={(e) => setStart(e.target.value)}
+                      onChange={(e) => handleStartDateChange(e.target.value)}
+                      max={end || undefined}
                       className="rounded-lg border px-3 py-2 text-sm"
                     />
                   </div>
@@ -1826,29 +1957,96 @@ export default function WeconTable({ initialArea }: Props) {
                     <input
                       type="date"
                       value={end}
-                      onChange={(e) => setEnd(e.target.value)}
+                      onChange={(e) => handleEndDateChange(e.target.value)}
+                      min={start || undefined}
+                      max={(() => {
+                        const today = getTodayInMalaysia();
+                        if (!start) return today;
+                        const maxFromStart = shiftDate(
+                          start,
+                          MAX_VISUALIZATION_RANGE_DAYS - 1,
+                        );
+                        return maxFromStart < today ? maxFromStart : today;
+                      })()}
                       className="rounded-lg border px-3 py-2 text-sm"
                     />
                   </div>
 
                   <button
                     onClick={() => fetchHistorical(start, end)}
-                    disabled={loadingHistorical}
+                    disabled={loadingHistorical || isDateRangeOverLimit}
                     className={`h-[38px] rounded-lg px-4 py-2 text-sm text-white ${
-                      loadingHistorical
+                      loadingHistorical || isDateRangeOverLimit
                         ? "cursor-not-allowed bg-blue-400"
                         : "bg-blue-600 hover:bg-blue-700"
                     }`}
                   >
                     {loadingHistorical ? "Loading..." : "Load Data"}
                   </button>
-                </div>
 
+                  <button
+                    onClick={handleExportPDF}
+                    className="h-[38px] rounded-lg bg-gray-800 px-4 py-2 text-sm text-white"
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              </div>
+
+              {isDateRangeOverLimit && (
+                <p className="mb-4 text-sm text-amber-700">
+                  For stable performance, visualization supports up to {MAX_VISUALIZATION_RANGE_DAYS} days per query.
+                </p>
+              )}
+
+              <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <SmallInfoPanel
+                  title="Trend Highlights"
+                  items={
+                    keyTrendItems.length > 0
+                      ? keyTrendItems.map(
+                          (item) =>
+                            `${item.label}: ${item.direction}, avg ${formatMetric(
+                              item.average,
+                              item.unit,
+                            )}, latest ${formatMetric(item.latest, item.unit)}, shift ${
+                              item.changePct !== null
+                                ? `${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(1)}%`
+                                : "insufficient trend data"
+                            }`,
+                        )
+                      : [
+                          "No significant trend shift detected in the selected chart range.",
+                        ]
+                  }
+                />
+
+                <SmallInfoPanel
+                  title="Parameter Comparison"
+                  items={parameterComparisonItems}
+                />
+
+                <SmallInfoPanel
+                  title="Threshold Exceedance Indicators"
+                  items={
+                    exceedanceIndicators.length > 0
+                      ? exceedanceIndicators.map(
+                          (item) =>
+                            `${item.label}: ${item.exceedanceRate}% points exceed Class IV-V threshold (latest ${formatMetric(item.latest, item.unit)}).`,
+                        )
+                      : ["No Class IV-V threshold exceedance found in the selected chart range."]
+                  }
+                />
+              </div>
+
+              <div className="mb-4 flex justify-end">
                 <button
-                  onClick={handleExportPDF}
-                  className="h-[38px] rounded-lg bg-gray-800 px-4 py-2 text-sm text-white"
+                  onClick={() => setShowVisualization((prev) => !prev)}
+                  className="h-[38px] rounded-lg border px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
                 >
-                  Export PDF
+                  {showVisualization
+                    ? "Hide Visualization"
+                    : "Show Visualization"}
                 </button>
               </div>
 
@@ -1863,7 +2061,12 @@ export default function WeconTable({ initialArea }: Props) {
 
               {showVisualization && (
                 <div className="rounded-2xl border bg-gray-50 p-6">
-                  <Visualizations rows={sortedData} schema={schema} />
+                  <Visualizations
+                    rows={sortedData}
+                    schema={schema}
+                    rangeStart={start}
+                    rangeEnd={end}
+                  />
                 </div>
               )}
             </div>
