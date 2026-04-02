@@ -412,6 +412,39 @@ export default function WeconTable({ initialArea }: Props) {
     }
   }
 
+  function getClassBadgeClass(className: OverallNWQSClass) {
+    switch (className) {
+      case "I":
+        return "bg-emerald-100 text-emerald-700 border-emerald-200";
+      case "II":
+        return "bg-green-100 text-green-700 border-green-200";
+      case "III":
+        return "bg-amber-100 text-amber-700 border-amber-200";
+      case "IV":
+        return "bg-orange-100 text-orange-700 border-orange-200";
+      case "V":
+        return "bg-red-100 text-red-700 border-red-200";
+      default:
+        return "bg-gray-100 text-gray-600 border-gray-200";
+    }
+  }
+
+  function getConfidenceBadgeClass(confidence: number) {
+    if (confidence >= 80) {
+      return "bg-emerald-100 text-emerald-700 border-emerald-200";
+    }
+
+    if (confidence >= 60) {
+      return "bg-green-100 text-green-700 border-green-200";
+    }
+
+    if (confidence >= 40) {
+      return "bg-amber-100 text-amber-700 border-amber-200";
+    }
+
+    return "bg-red-100 text-red-700 border-red-200";
+  }
+
   function getHeroStyles(riskLevel: string) {
     switch (riskLevel) {
       case "Low":
@@ -1098,7 +1131,7 @@ export default function WeconTable({ initialArea }: Props) {
     return getAIInsightSummary(dailyData, sortedData);
   }, [dailyData, sortedData]);
 
-  const historicalAssessment = useMemo(() => {
+  const historicalAssessment = useMemo<OverallAssessment>(() => {
     if (aiWindowRows.length === 0) {
       return {
         className: "N/A",
@@ -1587,7 +1620,11 @@ export default function WeconTable({ initialArea }: Props) {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-center gap-3">
-                    <span className="rounded-full border border-gray-200 bg-white px-4 py-1.5 text-sm font-semibold text-gray-900">
+                    <span
+                      className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${getClassBadgeClass(
+                        latestAssessment.className,
+                      )}`}
+                    >
                       Class {latestAssessment.className}
                     </span>
 
@@ -1599,7 +1636,11 @@ export default function WeconTable({ initialArea }: Props) {
                       {activeRiskLevel} Risk
                     </span>
 
-                    <span className="rounded-full border border-gray-200 bg-white px-4 py-1.5 text-sm font-semibold text-gray-700">
+                    <span
+                      className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${getConfidenceBadgeClass(
+                        confidencePercentage,
+                      )}`}
+                    >
                       Confidence {confidencePercentage}%
                     </span>
                   </div>
