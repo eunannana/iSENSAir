@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Visualizations from "@/components/Visualizations";
 import LoadingScreen from "@/components/LoadingScreen";
 import jsPDF from "jspdf";
@@ -97,6 +97,7 @@ type RowData = Record<string, any>;
 
 const AI_WINDOW_DAYS = 7;
 const AI_MAX_ROWS = 168;
+const REALTIME_ROTATION_MS = 120000;
 
 const SENSOR_KEYS = [
   "Tr_Sensor",
@@ -286,6 +287,7 @@ export default function WeconTable({ initialArea }: Props) {
   >(null);
   const [detailedInsight, setDetailedInsight] =
     useState<DetailedInsightResponse | null>(null);
+  const quickInsightCacheRef = useRef<Record<string, string>>({});
 
   const rowsPerPage = 25;
 
@@ -531,60 +533,128 @@ export default function WeconTable({ initialArea }: Props) {
     }
   }
 
-  async function generateQuickAIInsight(
-    latestRowParam: any,
-    sortedDataParam: any[],
-    aiInsightParam: any,
-    assessmentParam: OverallAssessment,
-  ) {
-    if (!latestRowParam) return;
+  const generateQuickAIInsight = useCallback(
+    async (
+      latestRowParam: any,
+      sortedDataParam: any[],
+      aiInsightParam: any,
+      assessmentParam: OverallAssessment,
+    ) => {
+      if (!latestRowParam) return "";
 
-    setLoadingQuickInsight(true);
+      setLoadingQuickInsight(true);
 
-    try {
-      const quickRows =
-        compressRowsToHourlyRepresentative(sortedDataParam).slice(-48);
+      try {
+        const quickRows = (() => {
+          const rows = Array.isArray(sortedDataParam) ? [...sortedDataParam] : [];
 
-      const res = await fetch("/api/openai", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          provider: "openai",
-          mode: "quick_insight",
-          latestRow: latestRowParam,
-          rows: quickRows,
-          aiInsight: aiInsightParam,
-          nwqsSummary: {
-            overallClass: assessmentParam.className,
-            overallStatus: assessmentParam.status,
-            dominantReason: assessmentParam.dominantReason,
-            drivers: assessmentParam.drivers,
-            lastUpdated: latestRowParam?.Timestamp,
+          const parseTime = (ts: string) => {
+            if (!ts) return 0;
+            if (ts.includes("T")) {
+              const value = new Date(ts).getTime();
+              return Number.isNaN(value) ? 0 : value;
+            }
+
+            const [datePart, timePart] = ts.includes(",")
+              ? ts.split(",").map((s) => s.trim())
+              : ts.split(" ");
+
+            if (!datePart) return 0;
+
+            const [day, month, year] = datePart.split("/");
+            const timeArray = timePart ? timePart.split(":").map(Number) : [0, 0, 0];
+
+            const parsed = new Date(
+              Number(year),
+              Number(month) - 1,
+              Number(day),
+              timeArray[0] || 0,
+              timeArray[1] || 0,
+              timeArray[2] || 0,
+            ).getTime();
+
+            return Number.isNaN(parsed) ? 0 : parsed;
+          };
+
+          const getHourBucketKey = (ts: string) => {
+            const time = parseTime(ts);
+            if (!time) return "";
+            const d = new Date(time);
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+            const hh = String(d.getHours()).padStart(2, "0");
+            return `${yyyy}-${mm}-${dd} ${hh}:00`;
+          };
+
+          const hourMap = new Map<string, RowData>();
+          rows
+            .sort((a, b) => parseTime(a.Timestamp) - parseTime(b.Timestamp))
+            .forEach((row) => {
+              if (!row?.Timestamp) return;
+              if (
+                !SENSOR_KEYS.some((key) => {
+                  const val = row?.[key];
+                  return (
+                    val !== null &&
+                    val !== undefined &&
+                    val !== "" &&
+                    val !== 0 &&
+                    !Number.isNaN(val)
+                  );
+                })
+              ) {
+                return;
+              }
+
+              const bucket = getHourBucketKey(row.Timestamp);
+              if (!bucket) return;
+              hourMap.set(bucket, row);
+            });
+
+          return Array.from(hourMap.values()).slice(-48);
+        })();
+
+        const res = await fetch("/api/openai", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        }),
-      });
+          body: JSON.stringify({
+            provider: "openai",
+            mode: "quick_insight",
+            latestRow: latestRowParam,
+            rows: quickRows,
+            aiInsight: aiInsightParam,
+            nwqsSummary: {
+              overallClass: assessmentParam.className,
+              overallStatus: assessmentParam.status,
+              dominantReason: assessmentParam.dominantReason,
+              drivers: assessmentParam.drivers,
+              lastUpdated: latestRowParam?.Timestamp,
+            },
+          }),
+        });
 
-      const result = await res.json();
+        const result = await res.json();
 
-      if (!res.ok) {
-        throw new Error(result?.error || "Failed to generate quick insight.");
+        if (!res.ok) {
+          throw new Error(result?.error || "Failed to generate quick insight.");
+        }
+
+        return (
+          result?.insight ||
+          buildQuickInsightFallback(aiInsightParam, assessmentParam)
+        );
+      } catch (error) {
+        console.error("Failed to generate quick AI insight:", error);
+        return buildQuickInsightFallback(aiInsightParam, assessmentParam);
+      } finally {
+        setLoadingQuickInsight(false);
       }
-
-      setAIQuickInsight(
-        result?.insight ||
-          buildQuickInsightFallback(aiInsightParam, assessmentParam),
-      );
-    } catch (error) {
-      console.error("Failed to generate quick AI insight:", error);
-      setAIQuickInsight(
-        buildQuickInsightFallback(aiInsightParam, assessmentParam),
-      );
-    } finally {
-      setLoadingQuickInsight(false);
-    }
-  }
+    },
+    [],
+  );
 
   async function generateAIDecisionPanel(
     latestRowParam: any,
@@ -821,6 +891,7 @@ export default function WeconTable({ initialArea }: Props) {
     setDetailedInsightError(null);
     setShowInsightModal(false);
     setAIQuickInsight("");
+    quickInsightCacheRef.current = {};
 
     const handleRetry = (
       attempt: number,
@@ -938,19 +1009,19 @@ export default function WeconTable({ initialArea }: Props) {
   }, [latestSnapshotRows, snapshotRotationIndex, latestRow]);
 
   useEffect(() => {
-    if (latestSnapshotRows.length <= 1) {
+    const snapshotCount = latestSnapshotRows.length;
+
+    if (snapshotCount <= 1) {
       setSnapshotRotationIndex(0);
       return;
     }
 
     const rotateInterval = setInterval(() => {
-      setSnapshotRotationIndex(
-        (prev) => (prev + 1) % latestSnapshotRows.length,
-      );
-    }, 300000);
+      setSnapshotRotationIndex((prev) => (prev + 1) % snapshotCount);
+    }, REALTIME_ROTATION_MS);
 
     return () => clearInterval(rotateInterval);
-  }, [latestSnapshotRows]);
+  }, [latestSnapshotRows.length]);
 
   useEffect(() => {
     setSnapshotAnimating(true);
@@ -961,13 +1032,71 @@ export default function WeconTable({ initialArea }: Props) {
     return () => clearTimeout(animationTimeout);
   }, [snapshotRotationIndex, latestRow?.Timestamp]);
 
-  const aiInsight = useMemo(() => {
-    return getAIInsightSummary(latestRow, sortedData);
-  }, [latestRow, sortedData]);
+  // Helper function untuk mendapatkan data daily (rata-rata harian)
+  const getDailyAggregatedData = (dataRows: RowData[]): any | null => {
+    if (!dataRows || dataRows.length === 0) return null;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    // Filter data untuk hari ini
+    let todayRows = dataRows.filter((row) => {
+      if (!row?.Timestamp) return false;
+      const rowTime = parseTimestamp(row.Timestamp);
+      const rowDate = new Date(rowTime);
+      rowDate.setHours(0, 0, 0, 0);
+      return rowDate.getTime() === today.getTime();
+    });
+
+    // Jika tidak ada data hari ini, gunakan kemarin
+    if (todayRows.length === 0) {
+      todayRows = dataRows.filter((row) => {
+        if (!row?.Timestamp) return false;
+        const rowTime = parseTimestamp(row.Timestamp);
+        const rowDate = new Date(rowTime);
+        rowDate.setHours(0, 0, 0, 0);
+        return rowDate.getTime() === yesterday.getTime();
+      });
+    }
+
+    if (todayRows.length === 0) return null;
+
+    // Aggregate data: hitung rata-rata untuk setiap sensor
+    const aggregated: Record<string, number> = {};
+
+    SENSOR_KEYS.forEach((key) => {
+      const values = todayRows
+        .map((row) => toNullableNumber(row[key]))
+        .filter((v) => v !== null) as number[];
+
+      if (values.length > 0) {
+        aggregated[key] = values.reduce((sum, val) => sum + val, 0) / values.length;
+      }
+    });
+
+    return {
+      ...aggregated,
+      Timestamp: todayRows[0]?.Timestamp || new Date().toISOString(),
+    };
+  };
+
+  const dailyData = useMemo(() => {
+    return getDailyAggregatedData(sortedData);
+  }, [sortedData]);
 
   const latestAssessment = useMemo(() => {
     return assessOverallWaterQuality(displayedSnapshotRow);
   }, [displayedSnapshotRow]);
+
+  const dailyAssessment = useMemo(() => {
+    return assessOverallWaterQuality(dailyData);
+  }, [dailyData]);
+
+  const aiInsight = useMemo(() => {
+    return getAIInsightSummary(dailyData, sortedData);
+  }, [dailyData, sortedData]);
 
   const historicalAssessment = useMemo(() => {
     if (aiWindowRows.length === 0) {
@@ -1071,15 +1200,45 @@ export default function WeconTable({ initialArea }: Props) {
   }, [aiWindowRows, aiHistoricalSummary]);
 
   useEffect(() => {
-    if (displayedSnapshotRow) {
-      generateQuickAIInsight(
-        displayedSnapshotRow,
+    const dailyTimestamp = dailyData?.Timestamp ?? "";
+
+    if (!dailyData || !dailyTimestamp) return;
+
+    const cachedInsight = quickInsightCacheRef.current[dailyTimestamp];
+    if (cachedInsight) {
+      setAIQuickInsight(cachedInsight);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const insightText = await generateQuickAIInsight(
+        dailyData,
         sortedData,
         aiInsight,
-        latestAssessment,
+        dailyAssessment,
       );
-    }
-  }, [displayedSnapshotRow, sortedData, aiInsight, latestAssessment]);
+
+      if (cancelled) return;
+
+      const resolvedInsight =
+        insightText || buildQuickInsightFallback(aiInsight, dailyAssessment);
+
+      quickInsightCacheRef.current[dailyTimestamp] = resolvedInsight;
+      setAIQuickInsight(resolvedInsight);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    generateQuickAIInsight,
+    dailyData,
+    sortedData,
+    aiInsight,
+    dailyAssessment,
+  ]);
 
   const handleExportPDF = () => {
     const pdf = new jsPDF("p", "mm", "a4");
@@ -1300,6 +1459,72 @@ export default function WeconTable({ initialArea }: Props) {
             </div>
           )}
 
+          {dailyData && (
+            <div className="mx-auto max-w-6xl px-4">
+              <div className="rounded-2xl border bg-white p-6 shadow-sm">
+                {/* HEADER */}
+                <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+                      <span className="h-2 w-2 rounded-full bg-blue-500" />
+                      Daily Water Quality Summary
+                    </h2>
+
+                    <p className="mt-1 text-sm text-gray-500">
+                      Daily aggregated water quality assessment based on daily
+                      average readings
+                    </p>
+                  </div>
+                </div>
+
+                {/* MINI STATUS */}
+                <div className="rounded-2xl border bg-gray-50 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
+                    Daily Classification
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span
+                      className={`text-xl font-semibold ${dailyAssessment.colorClass}`}
+                    >
+                      Class {dailyAssessment.className}
+                    </span>
+
+                    <span
+                      className={`rounded-full border px-3 py-1 text-xs font-semibold ${dailyAssessment.badgeClass}`}
+                    >
+                      {dailyAssessment.status}
+                    </span>
+                  </div>
+
+                  {/* EXPLANATION */}
+                  <div className="mt-4 border-t pt-4">
+                    <p className="text-sm leading-6 text-gray-700">
+                      {dailyAssessment.explanation}
+                    </p>
+                  </div>
+
+                  <div className="mt-4 border-t pt-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
+                      Daily AI Insight
+                    </p>
+
+                    {loadingQuickInsight ? (
+                      <p className="mt-2 text-sm leading-6 text-gray-400">
+                        Generating AI insight...
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-sm leading-7 text-gray-700">
+                        {aiQuickInsight ||
+                          buildQuickInsightFallback(aiInsight, dailyAssessment)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {latestRow && (
             <div className="mx-auto max-w-6xl px-4">
               <div className="rounded-2xl border bg-white p-6 shadow-sm">
@@ -1319,8 +1544,8 @@ export default function WeconTable({ initialArea }: Props) {
 
                   {/* TIME */}
                   <span
-                    className={`whitespace-nowrap text-sm text-gray-500 transition-colors duration-500 ${
-                      snapshotAnimating ? "text-blue-600" : ""
+                    className={`whitespace-nowrap text-sm text-gray-500 transition-all duration-500 ${
+                      snapshotAnimating ? "text-blue-600 opacity-90" : ""
                     }`}
                   >
                     {formatDisplayDateTime(currentDisplayTime)}
@@ -1330,10 +1555,10 @@ export default function WeconTable({ initialArea }: Props) {
 
                 {/* SENSOR GRID */}
                 <div
-                  className={`grid grid-cols-1 gap-5 transition-all duration-700 sm:grid-cols-2 xl:grid-cols-3 ${
+                  className={`grid grid-cols-1 gap-5 rounded-2xl border border-slate-100 bg-white/60 p-1 transition-all duration-700 ease-out sm:grid-cols-2 xl:grid-cols-3 ${
                     snapshotAnimating
-                      ? "scale-[0.995] opacity-70"
-                      : "scale-100 opacity-100"
+                      ? "scale-[0.985] translate-y-0.5 opacity-75 shadow-inner"
+                      : "scale-100 translate-y-0 opacity-100 shadow-sm"
                   }`}
                 >
                   {SENSOR_KEYS.map((key) => (
@@ -1344,49 +1569,6 @@ export default function WeconTable({ initialArea }: Props) {
                       roundValue={roundValue}
                     />
                   ))}
-                </div>
-
-                {/* SUMMARY + AI */}
-                <div className="mt-6 rounded-2xl border bg-gray-50 p-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
-                    Overall Water Quality Summary
-                  </p>
-
-                  {/* MINI STATUS (lebih kecil, gak lebay) */}
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span
-                      className={`text-xl font-semibold ${latestAssessment.colorClass}`}
-                    >
-                      Class {latestAssessment.className}
-                    </span>
-
-                    <span
-                      className={`rounded-full border px-3 py-1 text-xs font-semibold ${latestAssessment.badgeClass}`}
-                    >
-                      {latestAssessment.status}
-                    </span>
-                  </div>
-
-                  {/* AI INSIGHT */}
-                  <div className="mt-4 border-t pt-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
-                      AI Insight
-                    </p>
-
-                    {loadingQuickInsight ? (
-                      <p className="mt-2 text-sm leading-6 text-gray-400">
-                        Generating AI insight...
-                      </p>
-                    ) : (
-                      <p className="mt-2 text-sm leading-7 text-gray-700">
-                        {aiQuickInsight ||
-                          buildQuickInsightFallback(
-                            aiInsight,
-                            latestAssessment,
-                          )}
-                      </p>
-                    )}
-                  </div>
                 </div>
               </div>
             </div>
@@ -1721,45 +1903,7 @@ export default function WeconTable({ initialArea }: Props) {
   );
 }
 
-function getPredictedSource(aiInsight: any) {
-  const dominant = aiInsight?.dominantParameters || [];
-  const anomalyText = (aiInsight?.anomalies || [])
-    .map((a: any) => `${a.label} ${a.message}`)
-    .join(" ");
 
-  if (
-    dominant.includes("Ammonia") &&
-    (dominant.includes("COD") || dominant.includes("BOD"))
-  ) {
-    return "Possible domestic wastewater or organic discharge";
-  }
-
-  if (dominant.includes("Turbidity")) {
-    return "Possible sediment runoff or land disturbance";
-  }
-
-  if (
-    dominant.includes("Conductivity") ||
-    anomalyText.toLowerCase().includes("ph")
-  ) {
-    return "Possible chemical or industrial discharge";
-  }
-
-  if (dominant.includes("DO")) {
-    return "Possible oxygen depletion caused by organic contamination";
-  }
-
-  return "Potential mixed-source pollution requires further investigation";
-}
-
-function buildInsightText(aiInsight: any) {
-  const contributor =
-    aiInsight?.dominantParameters?.length > 0
-      ? aiInsight.dominantParameters.join(", ")
-      : "multiple water quality parameters";
-
-  return `${contributor} show the strongest influence on current water quality deterioration. The overall pattern indicates elevated pollution pressure with ${aiInsight.riskLevel.toLowerCase()} to critical monitoring concern depending on recent parameter movement.`;
-}
 
 function buildQuickInsightFallback(
   aiInsight: any,
@@ -2341,66 +2485,7 @@ function buildMainContributorSummary(drivers: DriverSummary[]) {
     .join("; ");
 }
 
-function buildPeriodOverview(summary: any) {
-  if (!summary?.topDrivers?.length) {
-    return `No sufficient ${AI_WINDOW_DAYS}-day data is available to describe the historical pattern.`;
-  }
 
-  const first = summary.topDrivers[0];
-  const second = summary.topDrivers[1];
-  const third = summary.topDrivers[2];
-
-  const segments = [
-    `${first.label} was the strongest driver with an average of ${formatMetric(
-      first.average,
-      first.unit,
-    )}, latest value ${formatMetric(
-      first.latest,
-      first.unit,
-    )}, and exceedance rate ${first.exceedanceRate}%.`,
-  ];
-
-  if (second) {
-    segments.push(
-      `${second.label} also remained influential with ${second.direction} movement and a maximum of ${formatMetric(
-        second.maximum,
-        second.unit,
-      )}.`,
-    );
-  }
-
-  if (third) {
-    segments.push(
-      `${third.label} added supporting pressure with ${third.exceedanceRate}% exceedance occurrence during the analysis window.`,
-    );
-  }
-
-  return segments.join(" ");
-}
-
-function buildHistoricalExecutiveSummary(
-  summary: any,
-  assessment: OverallAssessment,
-) {
-  if (!summary?.topDrivers?.length) {
-    return `The ${AI_WINDOW_DAYS}-day historical analysis is still waiting for enough valid data points.`;
-  }
-
-  const top = summary.topDrivers[0];
-  const next = summary.topDrivers[1];
-  const source = summary.primarySource?.source || "mixed-source pollution";
-
-  return `Over the last ${AI_WINDOW_DAYS} days, the river condition is assessed as ${assessment.status.toLowerCase()} (${
-    assessment.className === "N/A"
-      ? "unclassified"
-      : `Class ${assessment.className}`
-  }), mainly driven by ${top.label}${next ? ` and ${next.label}` : ""}. ${top.label} recorded an average of ${formatMetric(
-    top.average,
-    top.unit,
-  )}, latest value ${formatMetric(top.latest, top.unit)}, and exceedance rate ${
-    top.exceedanceRate
-  }%, indicating persistent short-term pressure rather than a one-time spike. The broader pattern suggests ${source.toLowerCase()}, so the result should be interpreted as a ${AI_WINDOW_DAYS}-day historical decision rather than a single-snapshot judgement.`;
-}
 
 function buildCombinedHistoricalSummary(
   summary: any,
@@ -2561,9 +2646,6 @@ function buildSourceDetail(summary: any) {
     .join(" ");
 }
 
-function buildConfidenceDetail(summary: any) {
-  return `The confidence score is ${summary?.confidenceScore ?? 70}% because the interpretation is supported by repeated hourly-representative behaviour across ${summary?.recordCount ?? 0} valid records, recurring exceedance patterns, and consistent dominance of the same high-impact parameters. This confidence should still be verified with field inspection because source attribution remains a hypothesis, not direct proof.`;
-}
 
 function buildRecommendationDetail(summary: any) {
   const recommendation = buildRecommendedActionFallback(summary);
@@ -2646,18 +2728,6 @@ function HeroMetricCard({
     </div>
   );
 }
-function MiniDecisionRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border bg-white p-3">
-      <p className="text-[11px] uppercase tracking-wide text-gray-500">
-        {label}
-      </p>
-      <p className="mt-1 text-sm font-medium leading-6 text-gray-800">
-        {value}
-      </p>
-    </div>
-  );
-}
 
 function DataCard({
   sensorKey,
@@ -2728,12 +2798,10 @@ function DetailedInsightModal({
   loading,
   error,
   data,
-  riskLevel,
   decision,
   fallbackSource,
   fallbackClass,
   historicalSummary,
-  windowDays,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -2750,14 +2818,14 @@ function DetailedInsightModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100]">
+    <div className="fixed inset-0 z-[1200]">
       <div
         className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
         onClick={onClose}
       />
 
       <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-3xl border bg-white shadow-2xl">
+        <div className="max-h-[calc(100dvh-2rem)] w-full max-w-5xl overflow-hidden rounded-3xl border bg-white shadow-2xl">
           <div className="flex items-start justify-between gap-4 border-b bg-gradient-to-r from-indigo-50 to-white px-6 py-5">
             <div>
               <h3 className="text-2xl font-semibold text-gray-900">
@@ -2777,7 +2845,7 @@ function DetailedInsightModal({
             </button>
           </div>
 
-          <div className="max-h-[calc(90vh-92px)] overflow-y-auto px-6 py-6">
+          <div className="max-h-[calc(100dvh-9.5rem)] overflow-y-auto px-6 py-6">
             {loading && (
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <div className="mb-4 h-8 w-8 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent"></div>
@@ -3009,18 +3077,4 @@ function CompactInfoCard({
   );
 }
 
-function formatModalDateTime(ts: string) {
-  if (!ts) return "-";
 
-  const date = new Date(ts);
-  if (isNaN(date.getTime())) return ts;
-
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const year = date.getFullYear();
-  const hour = String(date.getHours()).padStart(2, "0");
-  const minute = String(date.getMinutes()).padStart(2, "0");
-  const second = String(date.getSeconds()).padStart(2, "0");
-
-  return `${day}/${month}/${year}, ${hour}:${minute}:${second}`;
-}

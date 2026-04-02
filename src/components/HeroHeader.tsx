@@ -8,7 +8,7 @@ type HeroHeaderProps = {
 
 export default function HeroHeader({ onScrollToMap }: HeroHeaderProps) {
   return (
-    <section className="relative isolate w-full overflow-hidden">
+    <section className="relative isolate w-screen h-screen overflow-hidden">
       {/* Background */}
       <Image
         src="/img/hero-river.jpg"
@@ -17,14 +17,14 @@ export default function HeroHeader({ onScrollToMap }: HeroHeaderProps) {
         priority
         className="object-cover object-center"
         sizes="100vw"
-        quality={85}
+        quality={90}
       />
 
       {/* Overlay */}
       <div className="absolute inset-0 bg-white/84 backdrop-blur-[2px]" />
 
       {/* Content */}
-      <div className="relative mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-7xl flex-col items-center justify-center px-4 py-12 text-center md:px-6 md:py-16">
+      <div className="relative mx-auto flex h-screen w-full max-w-7xl flex-col items-center justify-center px-4 py-12 text-center md:px-6 md:py-16">
         {/* Logo */}
         <div className="mx-auto w-full max-w-2xl">
           <Image

@@ -18,6 +18,7 @@ export default function Page() {
     "connecting" | "booting" | "loading"
   >("connecting");
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const [showBackToTop, setShowBackToTop] = useState(false);
 
   const mapSectionRef = useRef<HTMLElement | null>(null);
 
@@ -57,11 +58,33 @@ export default function Page() {
     checkAPI();
   }, []);
 
-  const scrollToMapSection = () => {
-    mapSectionRef.current?.scrollIntoView({
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowBackToTop(window.scrollY > 300);
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    window.scrollTo({
+      top: 0,
       behavior: "smooth",
-      block: "start",
     });
+  };
+
+  const scrollToMapSection = () => {
+    const navHeight = 56; // navbar h-14 = 56px
+    const element = mapSectionRef.current;
+    
+    if (element) {
+      const elementPosition = element.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo({
+        top: elementPosition - navHeight,
+        behavior: "smooth",
+      });
+    }
   };
   const handleSelectArea = (area: string) => {
   setSelectedArea(area);
@@ -95,7 +118,7 @@ export default function Page() {
               <section
                 ref={mapSectionRef}
                 id="map-section"
-                className="scroll-mt-24 bg-gray-50 py-14 md:py-20"
+                className="bg-gray-50 py-14 md:py-20"
               >
                 <MapSelector onSelect={handleSelectArea} />
               </section>
@@ -124,6 +147,17 @@ export default function Page() {
             </section>
           )}
         </>
+      )}
+
+      {/* Back to Top Button */}
+      {showBackToTop && (
+        <button
+          onClick={scrollToTop}
+          className="fixed bottom-6 right-6 z-50 cursor-pointer rounded-full bg-blue-600 p-3 text-white shadow-lg transition hover:bg-blue-700 active:scale-95"
+          title="Back to top"
+        >
+          ⬆️
+        </button>
       )}
     </main>
   );
