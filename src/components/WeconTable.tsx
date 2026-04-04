@@ -303,7 +303,60 @@ export default function WeconTable({ initialArea }: Props) {
       );
     });
   }
+  function pdfEnsureSpace(pdf: jsPDF, currentY: number, needed = 24) {
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    if (currentY + needed > pageHeight - 15) {
+      pdf.addPage();
+      return 18;
+    }
+    return currentY;
+  }
 
+  function pdfSectionTitle(pdf: jsPDF, title: string, y: number) {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(14);
+    pdf.setTextColor(31, 41, 55);
+    pdf.text(title, 14, y);
+
+    pdf.setDrawColor(226, 232, 240);
+    pdf.line(14, y + 3, 196, y + 3);
+  }
+
+  function pdfSummaryBox(
+    pdf: jsPDF,
+    {
+      x,
+      y,
+      w,
+      h,
+      label,
+      value,
+      valueColor = [17, 24, 39],
+    }: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      label: string;
+      value: string;
+      valueColor?: [number, number, number];
+    },
+  ) {
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setFillColor(248, 250, 252);
+    pdf.roundedRect(x, y, w, h, 3, 3, "FD");
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text(label.toUpperCase(), x + 4, y + 7);
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(13);
+    pdf.setTextColor(...valueColor);
+    const lines = pdf.splitTextToSize(value || "-", w - 8);
+    pdf.text(lines, x + 4, y + 16);
+  }
   function roundValue(value: any): string {
     if (value === null || value === undefined || value === "") return "-";
     const num = parseFloat(value);
@@ -643,7 +696,9 @@ export default function WeconTable({ initialArea }: Props) {
 
       try {
         const quickRows = (() => {
-          const rows = Array.isArray(sortedDataParam) ? [...sortedDataParam] : [];
+          const rows = Array.isArray(sortedDataParam)
+            ? [...sortedDataParam]
+            : [];
 
           const parseTime = (ts: string) => {
             if (!ts) return 0;
@@ -659,7 +714,9 @@ export default function WeconTable({ initialArea }: Props) {
             if (!datePart) return 0;
 
             const [day, month, year] = datePart.split("/");
-            const timeArray = timePart ? timePart.split(":").map(Number) : [0, 0, 0];
+            const timeArray = timePart
+              ? timePart.split(":").map(Number)
+              : [0, 0, 0];
 
             const parsed = new Date(
               Number(year),
@@ -1186,7 +1243,8 @@ export default function WeconTable({ initialArea }: Props) {
         .filter((v) => v !== null) as number[];
 
       if (values.length > 0) {
-        aggregated[key] = values.reduce((sum, val) => sum + val, 0) / values.length;
+        aggregated[key] =
+          values.reduce((sum, val) => sum + val, 0) / values.length;
       }
     });
 
@@ -1291,12 +1349,16 @@ export default function WeconTable({ initialArea }: Props) {
       .filter((item) => item.maximum !== null && item.minimum !== null)
       .sort(
         (a, b) =>
-          (b.maximum || 0) - (b.minimum || 0) - ((a.maximum || 0) - (a.minimum || 0)),
+          (b.maximum || 0) -
+          (b.minimum || 0) -
+          ((a.maximum || 0) - (a.minimum || 0)),
       )[0];
 
     const strongestChange = [...visualizationDriverSummaries]
       .filter((item) => item.changePct !== null)
-      .sort((a, b) => Math.abs(b.changePct || 0) - Math.abs(a.changePct || 0))[0];
+      .sort(
+        (a, b) => Math.abs(b.changePct || 0) - Math.abs(a.changePct || 0),
+      )[0];
 
     const items: string[] = [];
 
@@ -1432,124 +1494,533 @@ export default function WeconTable({ initialArea }: Props) {
 
   const handleExportPDF = () => {
     const pdf = new jsPDF("p", "mm", "a4");
+    const pageWidth = pdf.internal.pageSize.getWidth();
 
-    pdf.setFontSize(16);
-    pdf.text("iSENS-AIR River Monitoring Report", 105, 15, {
-      align: "center",
+    const generatedAt = new Date().toLocaleString("en-MY", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
     });
 
-    pdf.setFontSize(10);
+    const reportRange = `${formatDisplayDate(start)} - ${formatDisplayDate(end)}`;
+
+    const latestForReport = displayedSnapshotRow || latestRow;
+    const representativeHistoricalRows = compressRowsToHourlyRepresentative(
+      sortedData,
+    )
+      .sort((a, b) => parseTimestamp(b.Timestamp) - parseTimestamp(a.Timestamp))
+      .slice(0, 72);
+
+    let currentY = 16;
+
+    // =========================
+    // PAGE 1 — HEADER
+    // =========================
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(18);
+    pdf.setTextColor(15, 23, 42);
     pdf.text(
-      `Area: ${area} | Generated: ${new Date().toLocaleString()}`,
-      105,
-      22,
-      { align: "center" },
+      "iSENS-AIR Water Quality Monitoring Report",
+      pageWidth / 2,
+      currentY,
+      {
+        align: "center",
+      },
     );
 
-    let currentY = 30;
+    currentY += 8;
 
-    if (latestRow) {
-      pdf.setFontSize(12);
-      pdf.text("Latest Snapshot", 14, currentY);
-      currentY += 6;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text(`Area: ${area}`, 14, currentY);
+    pdf.text(`Generated: ${generatedAt}`, 196, currentY, { align: "right" });
 
-      autoTable(pdf, {
-        startY: currentY,
-        head: [["Parameter", "Value"]],
-        body: SENSOR_KEYS.map((k) => [
-          SENSOR_META[k].label,
-          `${roundValue(latestRow[k])}${
-            SENSOR_META[k].unit ? ` ${SENSOR_META[k].unit}` : ""
-          }`,
-        ]),
-        styles: { fontSize: 9 },
-        theme: "grid",
-      });
+    currentY += 6;
+    pdf.text(`Reporting Period: ${reportRange}`, 14, currentY);
 
-      currentY =
-        (pdf as any).lastAutoTable?.finalY !== undefined
-          ? (pdf as any).lastAutoTable.finalY + 8
-          : currentY + 50;
+    currentY += 8;
 
-      autoTable(pdf, {
-        startY: currentY,
-        head: [["Overall Class", "Status", "Description", "Dominant Reason"]],
-        body: [
-          [
-            latestAssessment.className,
-            latestAssessment.status,
-            latestAssessment.description,
-            latestAssessment.dominantReason,
-          ],
+    pdfSummaryBox(pdf, {
+      x: 14,
+      y: currentY,
+      w: 56,
+      h: 22,
+      label: "Overall Class",
+      value: latestAssessment?.className
+        ? `Class ${latestAssessment.className}`
+        : "N/A",
+      valueColor:
+        latestAssessment.className === "V"
+          ? [220, 38, 38]
+          : latestAssessment.className === "IV"
+            ? [234, 88, 12]
+            : latestAssessment.className === "III"
+              ? [202, 138, 4]
+              : [22, 101, 52],
+    });
+
+    pdfSummaryBox(pdf, {
+      x: 77,
+      y: currentY,
+      w: 56,
+      h: 22,
+      label: "Risk Level",
+      value: activeRiskLevel || "-",
+      valueColor:
+        activeRiskLevel === "Critical"
+          ? [220, 38, 38]
+          : activeRiskLevel === "High"
+            ? [234, 88, 12]
+            : activeRiskLevel === "Moderate"
+              ? [202, 138, 4]
+              : [22, 101, 52],
+    });
+
+    pdfSummaryBox(pdf, {
+      x: 140,
+      y: currentY,
+      w: 56,
+      h: 22,
+      label: "Confidence",
+      value: `${confidencePercentage ?? 0}%`,
+      valueColor: [79, 70, 229],
+    });
+
+    currentY += 30;
+
+    pdfSectionTitle(pdf, "Executive Summary", currentY);
+    currentY += 8;
+
+    const executiveSummaryText =
+      aiDecision?.executiveSummary ||
+      buildCombinedHistoricalSummary(aiHistoricalSummary, latestAssessment) ||
+      "No summary available.";
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10.5);
+    pdf.setTextColor(55, 65, 81);
+    const executiveLines = pdf.splitTextToSize(executiveSummaryText, 182);
+    pdf.text(executiveLines, 14, currentY);
+    currentY += executiveLines.length * 5 + 6;
+
+    pdfSectionTitle(pdf, "Section 1 — Daily Water Quality Summary", currentY);
+    currentY += 8;
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [["Parameter", "Value"]],
+      body: SENSOR_KEYS.map((key) => [
+        SENSOR_META[key].label,
+        `${roundValue(dailyData?.[key])}${SENSOR_META[key].unit ? ` ${SENSOR_META[key].unit}` : ""}`,
+      ]),
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        cellPadding: 2.5,
+        textColor: [31, 41, 55],
+      },
+      headStyles: {
+        fillColor: [79, 70, 229],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      columnStyles: {
+        0: { cellWidth: 95 },
+        1: { cellWidth: 87 },
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    currentY = (pdf as any).lastAutoTable.finalY + 6;
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [["Daily Classification", "Status", "Explanation"]],
+      body: [
+        [
+          dailyAssessment?.className
+            ? `Class ${dailyAssessment.className}`
+            : "N/A",
+          dailyAssessment?.status || "-",
+          dailyAssessment?.explanation || "-",
         ],
-        styles: { fontSize: 9 },
-        theme: "grid",
-      });
-    }
+      ],
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        cellPadding: 2.5,
+        textColor: [31, 41, 55],
+        valign: "top",
+      },
+      headStyles: {
+        fillColor: [14, 165, 233],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      margin: { left: 14, right: 14 },
+    });
 
-    if (aiHistoricalSummary?.topDrivers?.length) {
-      currentY =
-        (pdf as any).lastAutoTable?.finalY !== undefined
-          ? (pdf as any).lastAutoTable.finalY + 8
-          : 100;
+    currentY = (pdf as any).lastAutoTable.finalY + 6;
 
-      autoTable(pdf, {
-        startY: currentY,
-        head: [
-          [
-            `${AI_WINDOW_DAYS}-Day Driver`,
-            "Average",
-            "Latest",
-            "Max",
-            "Trend",
-            "Exceedance Rate",
-          ],
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    pdf.setTextColor(79, 70, 229);
+    pdf.text("Daily AI Insight", 14, currentY);
+    currentY += 5;
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.setTextColor(55, 65, 81);
+    const quickInsightLines = pdf.splitTextToSize(
+      aiQuickInsight || buildQuickInsightFallback(aiInsight, dailyAssessment),
+      182,
+    );
+    pdf.text(quickInsightLines, 14, currentY);
+
+    // =========================
+    // PAGE 2 — REALTIME + AI DECISION
+    // =========================
+    pdf.addPage();
+    currentY = 18;
+
+    pdfSectionTitle(
+      pdf,
+      "Section 2 — Real-Time Water Quality Assessment",
+      currentY,
+    );
+    currentY += 8;
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text(
+      `Latest Timestamp: ${latestForReport?.Timestamp ? formatDisplayDateTime(latestForReport.Timestamp) : "-"}`,
+      14,
+      currentY,
+    );
+    currentY += 6;
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [["Parameter", "Code", "Latest Value", "Physical Status"]],
+      body: SENSOR_KEYS.map((key) => {
+        const value = latestForReport?.[key];
+        const isOut = isValueOutOfPhysicalRange(key, value);
+        return [
+          SENSOR_META[key].label,
+          SENSOR_META[key].shortLabel,
+          `${roundValue(value)}${SENSOR_META[key].unit ? ` ${SENSOR_META[key].unit}` : ""}`,
+          isOut ? "Out of physical range" : "Normal",
+        ];
+      }),
+      theme: "grid",
+      styles: {
+        fontSize: 8.8,
+        cellPadding: 2.2,
+        textColor: [31, 41, 55],
+      },
+      headStyles: {
+        fillColor: [16, 185, 129],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    currentY = (pdf as any).lastAutoTable.finalY + 6;
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [["Realtime Classification", "Status", "Dominant Reason"]],
+      body: [
+        [
+          latestAssessment?.className
+            ? `Class ${latestAssessment.className}`
+            : "N/A",
+          latestAssessment?.status || "-",
+          latestAssessment?.dominantReason || "-",
         ],
-        body: aiHistoricalSummary.topDrivers.map((driver: DriverSummary) => [
-          driver.label,
-          formatMetric(driver.average, driver.unit),
-          formatMetric(driver.latest, driver.unit),
-          formatMetric(driver.maximum, driver.unit),
-          driver.direction,
-          `${driver.exceedanceRate}%`,
-        ]),
-        styles: { fontSize: 8 },
-        theme: "grid",
-      });
-    }
+      ],
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        cellPadding: 2.5,
+        textColor: [31, 41, 55],
+        valign: "top",
+      },
+      headStyles: {
+        fillColor: [59, 130, 246],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      margin: { left: 14, right: 14 },
+    });
 
-    const canvas = document.querySelector("canvas");
-    if (canvas) {
-      pdf.addPage();
-      pdf.setFontSize(12);
-      pdf.text("Trend Visualization", 14, 15);
-      const chartImage = canvas.toDataURL("image/png");
-      pdf.addImage(chartImage, "PNG", 10, 20, 190, 100);
-    }
+    currentY = (pdf as any).lastAutoTable.finalY + 10;
 
-    if (sortedData.length > 0) {
-      pdf.addPage();
-      pdf.setFontSize(12);
-      pdf.text("Historical Data", 14, 15);
+    pdfSectionTitle(
+      pdf,
+      "Section 3 — AI Decision Support (7-Day Analysis)",
+      currentY,
+    );
+    currentY += 8;
 
-      const tableBody = sortedData.map((row) => [
-        row.Timestamp,
-        ...SENSOR_KEYS.map((k) => roundValue(row[k])),
-      ]);
+    pdfSummaryBox(pdf, {
+      x: 14,
+      y: currentY,
+      w: 56,
+      h: 20,
+      label: "AI Class",
+      value:
+        aiDecision?.currentWaterQualityStatus ||
+        `Class ${latestAssessment.className}`,
+      valueColor: [220, 38, 38],
+    });
 
-      autoTable(pdf, {
-        startY: 20,
-        head: [
-          ["Timestamp", ...SENSOR_KEYS.map((k) => SENSOR_META[k].shortLabel)],
+    pdfSummaryBox(pdf, {
+      x: 77,
+      y: currentY,
+      w: 56,
+      h: 20,
+      label: "Risk",
+      value: aiDecision?.pollutionRiskLevel || activeRiskLevel,
+      valueColor: [234, 88, 12],
+    });
+
+    pdfSummaryBox(pdf, {
+      x: 140,
+      y: currentY,
+      w: 56,
+      h: 20,
+      label: "Confidence",
+      value: `${confidencePercentage ?? 0}%`,
+      valueColor: [79, 70, 229],
+    });
+
+    currentY += 28;
+
+    const aiDecisionBody = [
+      [
+        "AI 7-Day Interpretation",
+        aiDecision?.executiveSummary ||
+          buildCombinedHistoricalSummary(aiHistoricalSummary, latestAssessment),
+      ],
+      [
+        "Likely Main Contributors",
+        aiDecision?.mainContributorSummary || likelyContributor || "-",
+      ],
+      [
+        "Predicted Source of Pollution",
+        aiDecision?.predictedSourceOfPollution ||
+          aiHistoricalSummary?.primarySource?.source ||
+          "-",
+      ],
+      [
+        "Recommended Action",
+        aiDecision?.recommendedAction ||
+          buildRecommendedActionFallback(aiHistoricalSummary),
+      ],
+    ];
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [["Item", "Details"]],
+      body: aiDecisionBody,
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        cellPadding: 2.8,
+        textColor: [31, 41, 55],
+        valign: "top",
+      },
+      headStyles: {
+        fillColor: [244, 114, 182],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      columnStyles: {
+        0: { cellWidth: 50, fontStyle: "bold" },
+        1: { cellWidth: 132 },
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    // =========================
+    // PAGE 3 — VISUALIZATION SUMMARY
+    // =========================
+    pdf.addPage();
+    currentY = 18;
+
+    pdfSectionTitle(
+      pdf,
+      "Section 4 — Supporting Data Visualization Summary",
+      currentY,
+    );
+    currentY += 8;
+
+    const trendRows =
+      keyTrendItems.length > 0
+        ? keyTrendItems.map((item) => [
+            item.label,
+            item.direction,
+            formatMetric(item.average, item.unit),
+            formatMetric(item.latest, item.unit),
+            item.changePct !== null
+              ? `${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(1)}%`
+              : "-",
+          ])
+        : [["No significant trend shift detected", "-", "-", "-", "-"]];
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [["Parameter", "Direction", "Average", "Latest", "Shift"]],
+      body: trendRows,
+      theme: "grid",
+      styles: {
+        fontSize: 8.8,
+        cellPadding: 2.4,
+        textColor: [31, 41, 55],
+      },
+      headStyles: {
+        fillColor: [37, 99, 235],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    currentY = (pdf as any).lastAutoTable.finalY + 8;
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [["Parameter Comparison Summary"]],
+      body: (parameterComparisonItems.length
+        ? parameterComparisonItems
+        : ["No comparison summary available."]
+      ).map((item) => [item]),
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        cellPadding: 2.5,
+        textColor: [31, 41, 55],
+        valign: "top",
+      },
+      headStyles: {
+        fillColor: [16, 185, 129],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    currentY = (pdf as any).lastAutoTable.finalY + 8;
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [["Threshold Exceedance Indicators"]],
+      body:
+        exceedanceIndicators.length > 0
+          ? exceedanceIndicators.map((item) => [
+              `${item.label}: ${item.exceedanceRate}% of points exceed Class IV-V threshold (latest ${formatMetric(item.latest, item.unit)}).`,
+            ])
+          : [
+              [
+                "No Class IV-V threshold exceedance found in the selected chart range.",
+              ],
+            ],
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        cellPadding: 2.5,
+        textColor: [31, 41, 55],
+        valign: "top",
+      },
+      headStyles: {
+        fillColor: [245, 158, 11],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    // =========================
+    // PAGE 4 — HISTORICAL SUMMARY
+    // =========================
+    pdf.addPage();
+    currentY = 18;
+
+    pdfSectionTitle(pdf, "Section 5 — Historical Data Summary", currentY);
+    currentY += 8;
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text(
+      `Representative hourly records used for reporting: ${representativeHistoricalRows.length}`,
+      14,
+      currentY,
+    );
+    currentY += 6;
+
+    autoTable(pdf, {
+      startY: currentY,
+      head: [
+        [
+          "Timestamp",
+          "TR",
+          "BOD",
+          "DO",
+          "COD",
+          "NH3",
+          "TDS",
+          "CT",
+          "ORP",
+          "pH",
         ],
-        body: tableBody,
-        styles: { fontSize: 6 },
-        theme: "grid",
-        margin: { top: 20 },
-      });
-    }
+      ],
+      body: representativeHistoricalRows.map((row) => [
+        formatDisplayDateTime(row.Timestamp),
+        roundValue(row.Tr_Sensor),
+        roundValue(row.BOD_Sensor),
+        roundValue(row.DO_Sensor),
+        roundValue(row.COD_Sensor),
+        roundValue(row.NH_Sensor),
+        roundValue(row.TDS_Sensor),
+        roundValue(row.CT_Sensor),
+        roundValue(row.ORP_Sensor),
+        roundValue(row.pH_Sensor),
+      ]),
+      theme: "grid",
+      styles: {
+        fontSize: 7.3,
+        cellPadding: 1.8,
+        textColor: [31, 41, 55],
+      },
+      headStyles: {
+        fillColor: [20, 184, 166],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      margin: { left: 10, right: 10 },
+      didDrawPage: () => {
+        pdf.setFontSize(9);
+        pdf.setTextColor(148, 163, 184);
+        pdf.text(
+          "Historical summary is represented by one selected row per hour to keep the report compact.",
+          14,
+          pdf.internal.pageSize.getHeight() - 8,
+        );
+      },
+    });
 
-    pdf.save(`iSENS-AIR-${area}-report.pdf`);
+    // =========================
+    // SAVE
+    // =========================
+    pdf.save(`iSENS-AIR-${area}-section-report.pdf`);
   };
 
   function renderPagination() {
@@ -1656,8 +2127,9 @@ export default function WeconTable({ initialArea }: Props) {
                         No records found for the selected date range
                       </h3>
                       <p className="mt-2 text-sm text-amber-800">
-                        Try selecting another range (up to {MAX_VISUALIZATION_RANGE_DAYS} days),
-                        then click Load Data again.
+                        Try selecting another range (up to{" "}
+                        {MAX_VISUALIZATION_RANGE_DAYS} days), then click Load
+                        Data again.
                       </p>
                     </div>
 
@@ -1692,8 +2164,8 @@ export default function WeconTable({ initialArea }: Props) {
                           </h2>
 
                           <p className="mt-1 text-sm text-gray-500">
-                            Daily aggregated water quality assessment based on daily
-                            average readings
+                            Daily aggregated water quality assessment based on
+                            daily average readings
                           </p>
                         </div>
                       </div>
@@ -1761,35 +2233,36 @@ export default function WeconTable({ initialArea }: Props) {
                           </h2>
 
                           <p className="mt-1 text-sm text-gray-500">
-                            Live monitoring of key water quality parameters in the
-                            selected area
+                            Live monitoring of key water quality parameters in
+                            the selected area
                           </p>
                         </div>
 
                         <div className="flex items-center gap-4">
-  {/* LIVE STATUS */}
-  <div className="flex items-center gap-2 rounded-full border border-green-300 bg-green-100 px-4 py-2 shadow-sm">
-    <span className="relative flex h-3 w-3">
-      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
-      <span className="relative inline-flex h-3 w-3 rounded-full bg-green-600"></span>
-    </span>
-    <span className="text-sm font-bold tracking-wide text-green-800">
-      LIVE
-    </span>
-  </div>
+                          {/* LIVE STATUS */}
+                          <div className="flex items-center gap-2 rounded-full border border-green-300 bg-green-100 px-4 py-2 shadow-sm">
+                            <span className="relative flex h-3 w-3">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+                              <span className="relative inline-flex h-3 w-3 rounded-full bg-green-600"></span>
+                            </span>
+                            <span className="text-sm font-bold tracking-wide text-green-800">
+                              LIVE
+                            </span>
+                          </div>
 
-  {/* TIME DISPLAY */}
-  <div
-    className={`flex items-center gap-2 rounded-xl border px-5 py-2 text-lg font-bold tracking-wide transition-all duration-300 ${
-      snapshotAnimating
-        ? "border-blue-400 bg-blue-50 text-blue-700 scale-[1.05] shadow-md"
-        : "border-gray-300 bg-white text-gray-800"
-    }`}
-  >
-   
-    <span>{formatDisplayDateTime(currentDisplayTime)}</span>
-  </div>
-</div>
+                          {/* TIME DISPLAY */}
+                          <div
+                            className={`flex items-center gap-2 rounded-xl border px-5 py-2 text-lg font-bold tracking-wide transition-all duration-300 ${
+                              snapshotAnimating
+                                ? "border-blue-400 bg-blue-50 text-blue-700 scale-[1.05] shadow-md"
+                                : "border-gray-300 bg-white text-gray-800"
+                            }`}
+                          >
+                            <span>
+                              {formatDisplayDateTime(currentDisplayTime)}
+                            </span>
+                          </div>
+                        </div>
                       </div>
 
                       {/* SENSOR GRID */}
@@ -1883,12 +2356,12 @@ export default function WeconTable({ initialArea }: Props) {
                     {loadingAIDecision
                       ? "Generating AI decision support..."
                       : loadingAIHistory
-                      ? "Analyzing historical river condition..."
-                      : aiDecision?.executiveSummary ||
-                        buildCombinedHistoricalSummary(
-                          aiHistoricalSummary,
-                          latestAssessment,
-                        )}
+                        ? "Analyzing historical river condition..."
+                        : aiDecision?.executiveSummary ||
+                          buildCombinedHistoricalSummary(
+                            aiHistoricalSummary,
+                            latestAssessment,
+                          )}
                   </p>
                 </div>
 
@@ -1899,7 +2372,8 @@ export default function WeconTable({ initialArea }: Props) {
                     value={
                       loadingAIDecision
                         ? "Generating contributor summary..."
-                        : aiDecision?.mainContributorSummary || likelyContributor
+                        : aiDecision?.mainContributorSummary ||
+                          likelyContributor
                     }
                     hint={`Dominant parameters over the last ${AI_WINDOW_DAYS} days`}
                   />
@@ -2010,7 +2484,8 @@ export default function WeconTable({ initialArea }: Props) {
 
               {isDateRangeOverLimit && (
                 <p className="mb-4 text-sm text-amber-700">
-                  For stable performance, visualization supports up to {MAX_VISUALIZATION_RANGE_DAYS} days per query.
+                  For stable performance, visualization supports up to{" "}
+                  {MAX_VISUALIZATION_RANGE_DAYS} days per query.
                 </p>
               )}
 
@@ -2049,7 +2524,9 @@ export default function WeconTable({ initialArea }: Props) {
                           (item) =>
                             `${item.label}: ${item.exceedanceRate}% points exceed Class IV-V threshold (latest ${formatMetric(item.latest, item.unit)}).`,
                         )
-                      : ["No Class IV-V threshold exceedance found in the selected chart range."]
+                      : [
+                          "No Class IV-V threshold exceedance found in the selected chart range.",
+                        ]
                   }
                 />
               </div>
@@ -2196,8 +2673,6 @@ export default function WeconTable({ initialArea }: Props) {
     </>
   );
 }
-
-
 
 function buildQuickInsightFallback(
   aiInsight: any,
@@ -2779,8 +3254,6 @@ function buildMainContributorSummary(drivers: DriverSummary[]) {
     .join("; ");
 }
 
-
-
 function buildCombinedHistoricalSummary(
   summary: any,
   assessment: OverallAssessment,
@@ -2940,7 +3413,6 @@ function buildSourceDetail(summary: any) {
     .join(" ");
 }
 
-
 function buildRecommendationDetail(summary: any) {
   const recommendation = buildRecommendedActionFallback(summary);
   const followUps = buildRecommendationListFallback(summary);
@@ -3035,7 +3507,9 @@ function DataCard({
   const meta = SENSOR_META[sensorKey];
   const numericValue = Number(value);
   const isInactive =
-    value !== null && value !== undefined && value !== "" &&
+    value !== null &&
+    value !== undefined &&
+    value !== "" &&
     Number.isFinite(numericValue) &&
     numericValue === 0;
   const outOfRange = !isInactive && isValueOutOfPhysicalRange(sensorKey, value);
@@ -3048,8 +3522,8 @@ function DataCard({
           isInactive
             ? "bg-gradient-to-r from-slate-400 via-slate-500 to-slate-600"
             : outOfRange
-            ? "bg-gradient-to-r from-amber-500 via-orange-500 to-red-500"
-            : "bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"
+              ? "bg-gradient-to-r from-amber-500 via-orange-500 to-red-500"
+              : "bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"
         }`}
       />
 
@@ -3070,8 +3544,8 @@ function DataCard({
               isInactive
                 ? "text-slate-400"
                 : outOfRange
-                ? "text-red-600"
-                : "text-slate-900"
+                  ? "text-red-600"
+                  : "text-slate-900"
             }
           >
             {isInactive ? "Inactive" : roundValue(value)}
@@ -3395,5 +3869,3 @@ function CompactInfoCard({
     </div>
   );
 }
-
-

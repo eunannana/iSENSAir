@@ -102,7 +102,7 @@ export default function UserManualPage() {
 
         {viewMode === "flipbook" ? (
           <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-lg md:p-6">
-            <UserManualFlipbook totalPages={14} />
+            <UserManualFlipbook totalPages={19} />
           </div>
         ) : (
           <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-lg">
