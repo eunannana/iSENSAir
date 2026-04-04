@@ -1766,15 +1766,30 @@ export default function WeconTable({ initialArea }: Props) {
                           </p>
                         </div>
 
-                        {/* TIME */}
-                        <span
-                          className={`whitespace-nowrap text-sm text-gray-500 transition-all duration-500 ${
-                            snapshotAnimating ? "text-blue-600 opacity-90" : ""
-                          }`}
-                        >
-                          {formatDisplayDateTime(currentDisplayTime)}
-                          {refreshingLatest ? " · Refreshing..." : ""}
-                        </span>
+                        <div className="flex items-center gap-4">
+  {/* LIVE STATUS */}
+  <div className="flex items-center gap-2 rounded-full border border-green-300 bg-green-100 px-4 py-2 shadow-sm">
+    <span className="relative flex h-3 w-3">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+      <span className="relative inline-flex h-3 w-3 rounded-full bg-green-600"></span>
+    </span>
+    <span className="text-sm font-bold tracking-wide text-green-800">
+      LIVE
+    </span>
+  </div>
+
+  {/* TIME DISPLAY */}
+  <div
+    className={`flex items-center gap-2 rounded-xl border px-5 py-2 text-lg font-bold tracking-wide transition-all duration-300 ${
+      snapshotAnimating
+        ? "border-blue-400 bg-blue-50 text-blue-700 scale-[1.05] shadow-md"
+        : "border-gray-300 bg-white text-gray-800"
+    }`}
+  >
+   
+    <span>{formatDisplayDateTime(currentDisplayTime)}</span>
+  </div>
+</div>
                       </div>
 
                       {/* SENSOR GRID */}
