@@ -295,6 +295,9 @@ export default function WeconTable({ initialArea }: Props) {
   const [detailedInsight, setDetailedInsight] =
     useState<DetailedInsightResponse | null>(null);
   const quickInsightCacheRef = useRef<Record<string, string>>({});
+  const detailedInsightCacheRef = useRef<
+    Record<string, DetailedInsightResponse>
+  >({});
 
   function getDailySampleCount(dataRows: RowData[]): number {
     if (!dataRows || dataRows.length === 0) return 0;
@@ -1003,6 +1006,22 @@ export default function WeconTable({ initialArea }: Props) {
   async function handleGetMoreAIInsight() {
     if (!latestRow || aiWindowRows.length === 0) return;
 
+    const cacheKey = [
+      latestRow.Timestamp || "",
+      aiWindowRows[0]?.Timestamp || "",
+      aiWindowRows[aiWindowRows.length - 1]?.Timestamp || "",
+      aiWindowRows.length,
+    ].join("|");
+
+    const cachedInsight = detailedInsightCacheRef.current[cacheKey];
+    if (cachedInsight) {
+      setDetailedInsight(cachedInsight);
+      setDetailedInsightError(null);
+      setShowInsightModal(true);
+      setLoadingDetailedInsight(false);
+      return;
+    }
+
     setShowInsightModal(true);
     setLoadingDetailedInsight(true);
     setDetailedInsightError(null);
@@ -1041,7 +1060,7 @@ export default function WeconTable({ initialArea }: Props) {
         );
       }
 
-      setDetailedInsight({
+      const resolvedInsight = {
         overallNarrative:
           result?.overallNarrative ||
           buildModalOverallNarrative(aiHistoricalSummary, latestAssessment),
@@ -1066,13 +1085,12 @@ export default function WeconTable({ initialArea }: Props) {
         monthlyPatternNarrative:
           result?.monthlyPatternNarrative ||
           buildMonthlyPatternNarrative(aiHistoricalSummary),
-      });
-    } catch (error: any) {
-      setDetailedInsightError(
-        error?.message || "Failed to generate more detailed AI insight.",
-      );
+      };
 
-      setDetailedInsight({
+      detailedInsightCacheRef.current[cacheKey] = resolvedInsight;
+      setDetailedInsight(resolvedInsight);
+    } catch (error: any) {
+      const fallbackInsight = {
         overallNarrative: buildModalOverallNarrative(
           aiHistoricalSummary,
           latestAssessment,
@@ -1090,7 +1108,13 @@ export default function WeconTable({ initialArea }: Props) {
         anomalyNarrative: buildAnomalyNarrative(aiHistoricalSummary),
         monthlyPatternNarrative:
           buildMonthlyPatternNarrative(aiHistoricalSummary),
-      });
+      };
+
+      detailedInsightCacheRef.current[cacheKey] = fallbackInsight;
+      setDetailedInsightError(
+        error?.message || "Failed to generate more detailed AI insight.",
+      );
+      setDetailedInsight(fallbackInsight);
     } finally {
       setLoadingDetailedInsight(false);
     }
@@ -1109,6 +1133,7 @@ export default function WeconTable({ initialArea }: Props) {
     setShowInsightModal(false);
     setAIQuickInsight("");
     quickInsightCacheRef.current = {};
+    detailedInsightCacheRef.current = {};
 
     const handleRetry = (
       attempt: number,
@@ -3895,7 +3920,7 @@ function DetailedInsightModal({
       />
 
       <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="max-h-[calc(100dvh-2rem)] w-full max-w-5xl overflow-hidden rounded-3xl border bg-white shadow-2xl">
+        <div className="max-h-[calc(100dvh-2rem)] w-full max-w-6xl overflow-hidden rounded-3xl border bg-white shadow-2xl">
           <div className="flex items-start justify-between gap-4 border-b bg-gradient-to-r from-indigo-50 to-white px-6 py-5">
             <div>
               <h3 className="text-2xl font-semibold text-gray-900">
@@ -3909,7 +3934,9 @@ function DetailedInsightModal({
 
             <button
               onClick={onClose}
-              className="h-10 w-10 rounded-full border text-lg text-gray-500 hover:bg-gray-50"
+              aria-label="Close popup"
+              title="Close popup"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-red-200 bg-red-50 text-xl font-bold text-red-600 shadow-sm transition hover:border-red-300 hover:bg-red-100 hover:text-red-700 focus-visible:ring-red-300"
             >
               ×
             </button>
