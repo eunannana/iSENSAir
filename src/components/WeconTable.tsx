@@ -1191,7 +1191,14 @@ export default function WeconTable({ initialArea }: Props) {
   }, [data]);
 
   const tableSourceData = useMemo(() => {
-    return [...data].sort(
+    return [...data]
+      .filter((row) => {
+        return SENSOR_KEYS.some((key) => {
+          const value = toNullableNumber(row?.[key]);
+          return value !== null && Math.abs(value) >= 0.005;
+        });
+      })
+      .sort(
       (a, b) => parseTimestamp(b.Timestamp) - parseTimestamp(a.Timestamp),
     );
   }, [data]);
@@ -2323,7 +2330,7 @@ export default function WeconTable({ initialArea }: Props) {
                           )}
 
                           <p className="mt-3 text-xs text-gray-500">
-                            Insight values are based on daily averages from {dailySampleCount} records.
+                            Insight values are based on daily averages from today's records.
                           </p>
                         </div>
                       </div>
