@@ -1083,18 +1083,13 @@ export default function WeconTable({ initialArea }: Props) {
   }, [area]);
 
   useEffect(() => {
-    const latestTs = latestData[0]?.Timestamp;
-    if (!latestTs || !isSameMalaysiaDay(latestTs)) {
-      return;
-    }
-
     const interval = setInterval(() => {
       if (document.hidden) return;
       fetchLatestSnapshot();
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [area, latestData]);
+  }, [area]);
 
   useEffect(() => {
     const clockInterval = setInterval(() => {
@@ -1150,14 +1145,8 @@ export default function WeconTable({ initialArea }: Props) {
     return latestData.length ? latestData[0] : null;
   }, [latestData]);
 
-  const hasRealtimeData = useMemo(() => {
-    const timestamp = latestRow?.Timestamp;
-    if (!timestamp) return false;
-    return isSameMalaysiaDay(timestamp);
-  }, [latestRow?.Timestamp]);
-
   const latestSnapshotRows = useMemo(() => {
-    const merged = [...latestData, ...sortedData];
+    const merged = [...latestData, ...sortedData, ...aiHistoryRows];
     const uniqueByTimestamp = new Map<string, any>();
 
     merged.forEach((row) => {
@@ -1168,10 +1157,42 @@ export default function WeconTable({ initialArea }: Props) {
       }
     });
 
-    return Array.from(uniqueByTimestamp.values())
-      .sort((a, b) => parseTimestamp(b.Timestamp) - parseTimestamp(a.Timestamp))
-      .slice(0, 3);
-  }, [latestData, sortedData]);
+    const validRows = Array.from(uniqueByTimestamp.values()).sort(
+      (a, b) => parseTimestamp(b.Timestamp) - parseTimestamp(a.Timestamp),
+    );
+
+    const yesterdayRef = new Date();
+    yesterdayRef.setDate(yesterdayRef.getDate() - 1);
+
+    const todayRows = validRows.filter((row) =>
+      isSameMalaysiaDay(row.Timestamp),
+    );
+
+    if (todayRows.length > 0) {
+      return todayRows.slice(0, 3);
+    }
+
+    const yesterdayRows = validRows.filter((row) =>
+      isSameMalaysiaDay(row.Timestamp, yesterdayRef),
+    );
+
+    if (yesterdayRows.length > 0) {
+      return yesterdayRows.slice(0, 3);
+    }
+
+    return [];
+  }, [latestData, sortedData, aiHistoryRows]);
+
+  const hasRealtimeData = latestSnapshotRows.length > 0;
+
+  const isRealtimeFallbackYesterday = useMemo(() => {
+    if (latestSnapshotRows.length === 0) return false;
+    const firstTs = latestSnapshotRows[0]?.Timestamp;
+    if (!firstTs) return false;
+    const yesterdayRef = new Date();
+    yesterdayRef.setDate(yesterdayRef.getDate() - 1);
+    return isSameMalaysiaDay(firstTs, yesterdayRef);
+  }, [latestSnapshotRows]);
 
   const displayedSnapshotRow = useMemo(() => {
     if (latestSnapshotRows.length === 0) return latestRow;
@@ -2114,44 +2135,16 @@ export default function WeconTable({ initialArea }: Props) {
 
       {loadingInitial ? null : (
         <div className="mt-6 space-y-8">
-          {errorMsg && (
+          {errorMsg && !isNoDataForSelectedRange && (
             <div className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
-              {isNoDataForSelectedRange ? (
-                <div className="mb-4 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600">
-                        No Historical Data
-                      </p>
-                      <h3 className="mt-2 text-lg font-semibold text-amber-900">
-                        No records found for the selected date range
-                      </h3>
-                      <p className="mt-2 text-sm text-amber-800">
-                        Try selecting another range (up to{" "}
-                        {MAX_VISUALIZATION_RANGE_DAYS} days), then click Load
-                        Data again.
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-amber-800">
-                      <p className="font-semibold">Current Selection</p>
-                      <p className="mt-1">
-                        {formatDisplayDate(start)} - {formatDisplayDate(end)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="mb-4 rounded-xl bg-red-100 p-3 text-red-800">
-                  {errorMsg}
-                </div>
-              )}
+              <div className="mb-4 rounded-xl bg-red-100 p-3 text-red-800">
+                {errorMsg}
+              </div>
             </div>
           )}
 
-          {(dailyData || hasRealtimeData) && (
-            <section className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
-              <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+          <section className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
                 {dailyData && (
                   <div className="xl:col-span-4">
                     <div className="h-full rounded-2xl border bg-white p-5 shadow-sm">
@@ -2221,34 +2214,75 @@ export default function WeconTable({ initialArea }: Props) {
                   </div>
                 )}
 
-                {hasRealtimeData && (
-                  <div className="xl:col-span-8">
+                <div className={dailyData ? "xl:col-span-8" : "xl:col-span-12"}>
                     <div className="h-full rounded-2xl border bg-white p-5 shadow-sm">
                       {/* HEADER */}
                       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
                         <div>
                           <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
-                            <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                            <span
+                              className={`h-2 w-2 rounded-full ${
+                                hasRealtimeData
+                                  ? "bg-green-500 animate-pulse"
+                                  : "bg-amber-500"
+                              }`}
+                            />
                             Real-Time Water Quality Assessment
                           </h2>
 
                           <p className="mt-1 text-sm text-gray-500">
-                            Live monitoring of key water quality parameters in
-                            the selected area
+                            {hasRealtimeData
+                              ? "Live monitoring of key water quality parameters in the selected area"
+                              : "No valid realtime snapshot is available"}
                           </p>
                         </div>
 
                         <div className="flex items-center gap-4">
                           {/* LIVE STATUS */}
-                          <div className="flex items-center gap-2 rounded-full border border-green-300 bg-green-100 px-4 py-2 shadow-sm">
-                            <span className="relative flex h-3 w-3">
-                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
-                              <span className="relative inline-flex h-3 w-3 rounded-full bg-green-600"></span>
-                            </span>
-                            <span className="text-sm font-bold tracking-wide text-green-800">
-                              LIVE
-                            </span>
-                          </div>
+                          {hasRealtimeData ? (
+                            <div
+                              className={`flex items-center gap-2 rounded-full px-4 py-2 shadow-sm ${
+                                isRealtimeFallbackYesterday
+                                  ? "border border-amber-300 bg-amber-100"
+                                  : "border border-green-300 bg-green-100"
+                              }`}
+                            >
+                              <span className="relative flex h-3 w-3">
+                                <span
+                                  className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                                    isRealtimeFallbackYesterday
+                                      ? "bg-amber-400"
+                                      : "animate-ping bg-green-400"
+                                  }`}
+                                ></span>
+                                <span
+                                  className={`relative inline-flex h-3 w-3 rounded-full ${
+                                    isRealtimeFallbackYesterday
+                                      ? "bg-amber-600"
+                                      : "bg-green-600"
+                                  }`}
+                                ></span>
+                              </span>
+                              <span
+                                className={`text-sm font-bold tracking-wide ${
+                                  isRealtimeFallbackYesterday
+                                    ? "text-amber-800"
+                                    : "text-green-800"
+                                }`}
+                              >
+                                {isRealtimeFallbackYesterday
+                                  ? "LAST VALID: YESTERDAY"
+                                  : "LIVE"}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 rounded-full border border-amber-300 bg-amber-100 px-4 py-2 shadow-sm">
+                              <span className="h-2.5 w-2.5 rounded-full bg-amber-600" />
+                              <span className="text-sm font-bold tracking-wide text-amber-800">
+                                WAITING FOR VALID DATA
+                              </span>
+                            </div>
+                          )}
 
                           {/* TIME DISPLAY */}
                           <div
@@ -2266,28 +2300,37 @@ export default function WeconTable({ initialArea }: Props) {
                       </div>
 
                       {/* SENSOR GRID */}
-                      <div
-                        className={`grid grid-cols-1 gap-5 rounded-2xl border border-slate-100 bg-white/60 p-1 transition-all duration-700 ease-out sm:grid-cols-2 2xl:grid-cols-3 ${
-                          snapshotAnimating
-                            ? "scale-[0.985] translate-y-0.5 opacity-75 shadow-inner"
-                            : "scale-100 translate-y-0 opacity-100 shadow-sm"
-                        }`}
-                      >
-                        {SENSOR_KEYS.map((key) => (
-                          <DataCard
-                            key={key}
-                            sensorKey={key}
-                            value={displayedSnapshotRow?.[key]}
-                            roundValue={roundValue}
-                          />
-                        ))}
-                      </div>
+                      {hasRealtimeData ? (
+                        <div
+                          className={`grid grid-cols-1 gap-5 rounded-2xl border border-slate-100 bg-white/60 p-1 transition-all duration-700 ease-out sm:grid-cols-2 2xl:grid-cols-3 ${
+                            snapshotAnimating
+                              ? "scale-[0.985] translate-y-0.5 opacity-75 shadow-inner"
+                              : "scale-100 translate-y-0 opacity-100 shadow-sm"
+                          }`}
+                        >
+                          {SENSOR_KEYS.map((key) => (
+                            <DataCard
+                              key={key}
+                              sensorKey={key}
+                              value={displayedSnapshotRow?.[key]}
+                              roundValue={roundValue}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-amber-300 bg-amber-50 p-8 text-center">
+                          <p className="text-sm font-semibold text-amber-800">
+                            No valid realtime record found.
+                          </p>
+                          <p className="mt-2 text-sm text-amber-700">
+                            The latest record exists but may contain inactive or invalid sensor values.
+                          </p>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
+                </div>
               </div>
             </section>
-          )}
 
           {latestRow && (
             <div className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
@@ -2481,6 +2524,31 @@ export default function WeconTable({ initialArea }: Props) {
                   </button>
                 </div>
               </div>
+
+              {isNoDataForSelectedRange && (
+                <div className="mb-4 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600">
+                        No Historical Data
+                      </p>
+                      <h3 className="mt-2 text-lg font-semibold text-amber-900">
+                        No records found for the selected date range
+                      </h3>
+                      <p className="mt-2 text-sm text-amber-800">
+                        Try selecting another range (up to {MAX_VISUALIZATION_RANGE_DAYS} days), then click Load Data again.
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-amber-800">
+                      <p className="font-semibold">Current Selection</p>
+                      <p className="mt-1">
+                        {formatDisplayDate(start)} - {formatDisplayDate(end)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {isDateRangeOverLimit && (
                 <p className="mb-4 text-sm text-amber-700">

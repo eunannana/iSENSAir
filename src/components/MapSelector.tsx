@@ -106,11 +106,14 @@ function isSameCalendarDay(timestamp: string, reference: Date = new Date()) {
   const parsed = new Date(timestamp);
   if (Number.isNaN(parsed.getTime())) return false;
 
-  return (
-    parsed.getFullYear() === reference.getFullYear() &&
-    parsed.getMonth() === reference.getMonth() &&
-    parsed.getDate() === reference.getDate()
-  );
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  return formatter.format(parsed) === formatter.format(reference);
 }
 
 function formatLastUpdated(timestamp?: string) {
