@@ -2575,8 +2575,8 @@ export default function WeconTable({ initialArea }: Props) {
                         Visualization
                       </h3>
                       <p className="mt-1 text-sm text-gray-500">
-                        AI decision uses the last {AI_WINDOW_DAYS} days, graphs
-                        remain available for supporting interpretation
+                        Charts and summaries reflect your selected historical
+                        date range (up to {MAX_VISUALIZATION_RANGE_DAYS} days).
                       </p>
                     </div>
 
