@@ -99,6 +99,10 @@ const AI_MAX_ROWS = 168;
 const REALTIME_ROTATION_MS = 120000;
 const MAX_VISUALIZATION_RANGE_DAYS = 14;
 const TABLE_ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100, "all"] as const;
+const NO_AI_HISTORY_MESSAGE =
+  "No 7-day historical data is available yet. The AI Decision Support panel will appear once enough records are collected.";
+const NO_AI_STATUS_LABEL = "N/A";
+type TableSortKey = "Timestamp" | (typeof SENSOR_KEYS)[number];
 
 const SENSOR_KEYS = [
   "Tr_Sensor",
@@ -260,9 +264,10 @@ export default function WeconTable({ initialArea }: Props) {
   const [loadingHistorical, setLoadingHistorical] = useState(false);
   const [loadingAIHistory, setLoadingAIHistory] = useState(false);
 
-  const [sortAsc, setSortAsc] = useState(false);
+  const [tableSortKey, setTableSortKey] = useState<TableSortKey>("Timestamp");
+  const [tableSortAsc, setTableSortAsc] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState<number | "all">(25);
+  const [rowsPerPage, setRowsPerPage] = useState<number | "all">(10);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [refreshingLatest, setRefreshingLatest] = useState(false);
@@ -362,6 +367,32 @@ export default function WeconTable({ initialArea }: Props) {
     const num = parseFloat(value);
     return isNaN(num) ? "-" : num.toFixed(2);
   }
+
+  const compareTableValues = useCallback(
+    (a: RowData, b: RowData, key: TableSortKey): number => {
+      if (key === "Timestamp") {
+        return parseTimestamp(a.Timestamp) - parseTimestamp(b.Timestamp);
+      }
+
+      const aValue = toNullableNumber(a?.[key]);
+      const bValue = toNullableNumber(b?.[key]);
+
+      if (aValue !== null && bValue !== null) {
+        return aValue - bValue;
+      }
+
+      const aText =
+        a?.[key] === null || a?.[key] === undefined ? "" : String(a[key]);
+      const bText =
+        b?.[key] === null || b?.[key] === undefined ? "" : String(b[key]);
+
+      return aText.localeCompare(bText, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    },
+    [],
+  );
 
   function formatDisplayDate(dateStr: string) {
     if (!dateStr) return "-";
@@ -1122,18 +1153,28 @@ export default function WeconTable({ initialArea }: Props) {
   const sortedData = useMemo(() => {
     const filtered = [...data].filter(hasValidSensorData);
 
-    return filtered.sort((a, b) => {
-      const timeA = parseTimestamp(a.Timestamp);
-      const timeB = parseTimestamp(b.Timestamp);
-      return sortAsc ? timeA - timeB : timeB - timeA;
-    });
-  }, [data, sortAsc]);
+    return filtered.sort(
+      (a, b) => parseTimestamp(b.Timestamp) - parseTimestamp(a.Timestamp),
+    );
+  }, [data]);
 
   const visualizationRows = useMemo(() => {
     return [...sortedData].sort(
       (a, b) => parseTimestamp(a.Timestamp) - parseTimestamp(b.Timestamp),
     );
   }, [sortedData]);
+
+  const tableRows = useMemo(() => {
+    return [...sortedData].sort((a, b) => {
+      const baseCompare = compareTableValues(a, b, tableSortKey);
+      if (baseCompare === 0) {
+        const timeCompare = parseTimestamp(a.Timestamp) - parseTimestamp(b.Timestamp);
+        return tableSortAsc ? timeCompare : -timeCompare;
+      }
+
+      return tableSortAsc ? baseCompare : -baseCompare;
+    });
+  }, [sortedData, compareTableValues, tableSortKey, tableSortAsc]);
 
   const aiWindowRows = useMemo(() => {
     const filtered = [...aiHistoryRows].filter(hasValidSensorData);
@@ -1424,7 +1465,7 @@ export default function WeconTable({ initialArea }: Props) {
     deriveRiskLevelFromClass(latestAssessment.className);
 
   const totalPages =
-    rowsPerPage === "all" ? 1 : Math.ceil(sortedData.length / rowsPerPage);
+    rowsPerPage === "all" ? 1 : Math.ceil(tableRows.length / rowsPerPage);
 
   const isDateRangeOverLimit = useMemo(() => {
     if (!start || !end) return false;
@@ -1446,8 +1487,8 @@ export default function WeconTable({ initialArea }: Props) {
 
   const paginatedData =
     rowsPerPage === "all"
-      ? sortedData
-      : sortedData.slice(
+      ? tableRows
+      : tableRows.slice(
           (currentPage - 1) * rowsPerPage,
           currentPage * rowsPerPage,
         );
@@ -1471,6 +1512,18 @@ export default function WeconTable({ initialArea }: Props) {
     return obj;
   }, [sortedData]);
 
+  const handleTableSort = (key: TableSortKey) => {
+    setCurrentPage(1);
+
+    if (tableSortKey === key) {
+      setTableSortAsc((current) => !current);
+      return;
+    }
+
+    setTableSortKey(key);
+    setTableSortAsc(false);
+  };
+
   useEffect(() => {
     if (latestRow && aiWindowRows.length > 0) {
       generateAIDecisionPanel(
@@ -1479,6 +1532,12 @@ export default function WeconTable({ initialArea }: Props) {
         latestAssessment,
         aiHistoricalSummary,
       );
+      return;
+    }
+
+    if (latestRow) {
+      setAIDecision(null);
+      setAIDecisionError(null);
     }
   }, [aiWindowRows, aiHistoricalSummary]);
 
@@ -2369,6 +2428,20 @@ export default function WeconTable({ initialArea }: Props) {
                           Generating confidence...
                         </span>
                       </>
+                    ) : aiWindowRows.length === 0 && !loadingAIHistory ? (
+                      <>
+                        <span className="rounded-full border border-gray-200 bg-gray-100 px-4 py-1.5 text-sm font-semibold text-gray-600">
+                          Class {NO_AI_STATUS_LABEL}
+                        </span>
+
+                        <span className="rounded-full border border-gray-200 bg-gray-100 px-4 py-1.5 text-sm font-semibold text-gray-600">
+                          Risk {NO_AI_STATUS_LABEL}
+                        </span>
+
+                        <span className="rounded-full border border-gray-200 bg-gray-100 px-4 py-1.5 text-sm font-semibold text-gray-600">
+                          Confidence {NO_AI_STATUS_LABEL}
+                        </span>
+                      </>
                     ) : (
                       <>
                         <span
@@ -2400,60 +2473,73 @@ export default function WeconTable({ initialArea }: Props) {
                 </div>
 
                 {/* Overview */}
-                <div className="mt-8 rounded-2xl border border-indigo-100 bg-gradient-to-br from-white to-indigo-50 p-6">
-                  <p className="text-xs font-semibold uppercase tracking-[0.25em] text-indigo-500">
-                    AI 7-Day Interpretation
-                  </p>
+                {aiWindowRows.length === 0 && !loadingAIHistory ? (
+                  <div className="mt-8 rounded-2xl border border-dashed border-amber-300 bg-amber-50 p-6 text-center">
+                    <p className="text-xs font-semibold uppercase tracking-[0.25em] text-amber-600">
+                      AI 7-Day Interpretation
+                    </p>
+                    <p className="mt-3 text-sm leading-8 text-amber-800 md:text-base">
+                      {NO_AI_HISTORY_MESSAGE}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-8 rounded-2xl border border-indigo-100 bg-gradient-to-br from-white to-indigo-50 p-6">
+                      <p className="text-xs font-semibold uppercase tracking-[0.25em] text-indigo-500">
+                        AI 7-Day Interpretation
+                      </p>
 
-                  <p className="mt-3 text-sm leading-8 text-gray-700 md:text-base">
-                    {loadingAIDecision
-                      ? "Generating AI decision support..."
-                      : loadingAIHistory
-                        ? "Analyzing historical river condition..."
-                        : aiDecision?.executiveSummary ||
-                          buildCombinedHistoricalSummary(
-                            aiHistoricalSummary,
-                            latestAssessment,
-                          )}
-                  </p>
-                </div>
+                      <p className="mt-3 text-sm leading-8 text-gray-700 md:text-base">
+                        {loadingAIDecision
+                          ? "Generating AI decision support..."
+                          : loadingAIHistory
+                            ? "Analyzing historical river condition..."
+                            : aiDecision?.executiveSummary ||
+                              buildCombinedHistoricalSummary(
+                                aiHistoricalSummary,
+                                latestAssessment,
+                              )}
+                      </p>
+                    </div>
 
-                {/* Cards */}
-                <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <HeroMetricCard
-                    title="Likely Main Contributors"
-                    value={
-                      loadingAIDecision
-                        ? "Generating contributor summary..."
-                        : aiDecision?.mainContributorSummary ||
-                          likelyContributor
-                    }
-                    hint={`Dominant parameters over the last ${AI_WINDOW_DAYS} days`}
-                  />
+                    {/* Cards */}
+                    <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <HeroMetricCard
+                        title="Likely Main Contributors"
+                        value={
+                          loadingAIDecision
+                            ? "Generating contributor summary..."
+                            : aiDecision?.mainContributorSummary ||
+                              likelyContributor
+                        }
+                        hint={`Dominant parameters over the last ${AI_WINDOW_DAYS} days`}
+                      />
 
-                  <HeroMetricCard
-                    title="Predicted Source of Pollution"
-                    value={
-                      loadingAIDecision
-                        ? "Generating source hypothesis..."
-                        : aiDecision?.predictedSourceOfPollution ||
-                          aiHistoricalSummary.primarySource?.source ||
-                          "Potential mixed-source pollution"
-                    }
-                    hint="Historical pollution source hypothesis"
-                  />
+                      <HeroMetricCard
+                        title="Predicted Source of Pollution"
+                        value={
+                          loadingAIDecision
+                            ? "Generating source hypothesis..."
+                            : aiDecision?.predictedSourceOfPollution ||
+                              aiHistoricalSummary.primarySource?.source ||
+                              "Potential mixed-source pollution"
+                        }
+                        hint="Historical pollution source hypothesis"
+                      />
 
-                  <HeroMetricCard
-                    title="Recommended Action"
-                    value={
-                      loadingAIDecision
-                        ? "Generating recommended action..."
-                        : aiDecision?.recommendedAction ||
-                          buildRecommendedActionFallback(aiHistoricalSummary)
-                    }
-                    hint={`Primary response based on the ${AI_WINDOW_DAYS}-day pattern`}
-                  />
-                </div>
+                      <HeroMetricCard
+                        title="Recommended Action"
+                        value={
+                          loadingAIDecision
+                            ? "Generating recommended action..."
+                            : aiDecision?.recommendedAction ||
+                              buildRecommendedActionFallback(aiHistoricalSummary)
+                        }
+                        hint={`Primary response based on the ${AI_WINDOW_DAYS}-day pattern`}
+                      />
+                    </div>
+                  </>
+                )}
 
                 {/* Button */}
                 <div className="mt-8 flex justify-center">
@@ -2702,7 +2788,7 @@ export default function WeconTable({ initialArea }: Props) {
                           {formatDisplayDate(start)} - {formatDisplayDate(end)}
                         </p>
                         <p className="mt-1 text-xs text-gray-400">
-                          Total Records: {sortedData.length}
+                          Total Records: {tableRows.length}
                         </p>
                       </div>
 
@@ -2710,16 +2796,39 @@ export default function WeconTable({ initialArea }: Props) {
                         <table className="min-w-full text-sm">
                           <thead className="bg-gray-100">
                             <tr>
-                              <th
-                                className="cursor-pointer px-3 py-2 text-left"
-                                onClick={() => setSortAsc(!sortAsc)}
-                              >
-                                Timestamp {sortAsc ? "↑" : "↓"}
+                              <th className="px-3 py-2 text-left">
+                                <button
+                                  type="button"
+                                  className="flex items-center gap-1 font-semibold text-gray-700 transition hover:text-gray-900"
+                                  onClick={() => handleTableSort("Timestamp")}
+                                >
+                                  <span>Timestamp</span>
+                                  <span>
+                                    {tableSortKey === "Timestamp"
+                                      ? tableSortAsc
+                                        ? "↑"
+                                        : "↓"
+                                      : "↕"}
+                                  </span>
+                                </button>
                               </th>
 
                               {SENSOR_KEYS.map((key) => (
                                 <th key={key} className="px-3 py-2 text-left">
-                                  {SENSOR_META[key].shortLabel}
+                                  <button
+                                    type="button"
+                                    className="flex items-center gap-1 font-semibold text-gray-700 transition hover:text-gray-900"
+                                    onClick={() => handleTableSort(key)}
+                                  >
+                                    <span>{SENSOR_META[key].shortLabel}</span>
+                                    <span>
+                                      {tableSortKey === key
+                                        ? tableSortAsc
+                                          ? "↑"
+                                          : "↓"
+                                        : "↕"}
+                                    </span>
+                                  </button>
                                 </th>
                               ))}
                             </tr>
