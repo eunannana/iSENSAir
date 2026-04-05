@@ -27,50 +27,66 @@ type MapSummaryItem = {
   lastUpdatedLabel: string;
 };
 
+function fitMapToLocations(map: L.Map, locations: LocationItem[]) {
+  if (locations.length === 0) return;
+
+  if (locations.length === 1) {
+    map.setView([locations[0].lat, locations[0].lng], 12);
+    return;
+  }
+
+  const bounds = locations.map((loc) => [loc.lat, loc.lng] as [number, number]);
+  map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+}
+
 function AutoFitBounds({ locations }: { locations: LocationItem[] }) {
   const map = useMap();
 
   useEffect(() => {
-    if (locations.length === 0) return;
-
-    if (locations.length === 1) {
-      map.setView([locations[0].lat, locations[0].lng], 12);
-      return;
-    }
-
-    const bounds = locations.map((loc) => [loc.lat, loc.lng] as [number, number]);
-    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+    fitMapToLocations(map, locations);
   }, [map, locations]);
 
   return null;
 }
 
-function ResetZoomButton({ locations }: { locations: LocationItem[] }) {
+function ResetZoomControl({ locations }: { locations: LocationItem[] }) {
   const map = useMap();
 
-  const handleResetZoom = () => {
-    if (locations.length === 0) return;
+  useEffect(() => {
+    const zoomContainer = map.zoomControl?.getContainer();
+    if (!zoomContainer) return;
 
-    if (locations.length === 1) {
-      map.setView([locations[0].lat, locations[0].lng], 12);
-      return;
-    }
+    const resetButton = L.DomUtil.create(
+      "a",
+      "leaflet-control-zoom-reset",
+      zoomContainer,
+    ) as HTMLAnchorElement;
 
-    const bounds = locations.map((loc) => [loc.lat, loc.lng] as [number, number]);
-    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
-  };
+    resetButton.href = "#";
+    resetButton.role = "button";
+    resetButton.ariaLabel = "Reset map view";
+    resetButton.title = "Reset map view to fit all locations";
+    resetButton.innerHTML = "&#8635;";
+    resetButton.style.fontSize = "18px";
+    resetButton.style.fontWeight = "700";
+    resetButton.style.lineHeight = "26px";
+    resetButton.style.textIndent = "0";
+    resetButton.style.borderTop = "1px solid #ccc";
 
-  return (
-    <div className="absolute top-4 right-4 z-[400]">
-      <button
-        onClick={handleResetZoom}
-        className="cursor-pointer rounded-lg bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-md transition hover:bg-gray-50 hover:shadow-lg active:scale-95"
-        title="Reset map view to fit all locations"
-      >
-        🔄 Reset
-      </button>
-    </div>
-  );
+    const onResetClick = (event: Event) => {
+      L.DomEvent.stop(event);
+      fitMapToLocations(map, locations);
+    };
+
+    L.DomEvent.on(resetButton, "click", onResetClick);
+
+    return () => {
+      L.DomEvent.off(resetButton, "click", onResetClick);
+      resetButton.remove();
+    };
+  }, [map, locations]);
+
+  return null;
 }
 
 const allLocations: LocationItem[] = [
@@ -300,7 +316,7 @@ export default function MapSelector({ onSelect }: Props) {
               />
 
               <AutoFitBounds locations={locations} />
-              <ResetZoomButton locations={locations} />
+              <ResetZoomControl locations={locations} />
 
             {locations.map((loc) => {
               const summary = mapSummary[loc.name];

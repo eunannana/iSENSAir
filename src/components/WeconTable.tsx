@@ -98,6 +98,7 @@ const AI_WINDOW_DAYS = 7;
 const AI_MAX_ROWS = 168;
 const REALTIME_ROTATION_MS = 120000;
 const MAX_VISUALIZATION_RANGE_DAYS = 14;
+const TABLE_ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100, "all"] as const;
 
 const SENSOR_KEYS = [
   "Tr_Sensor",
@@ -261,6 +262,7 @@ export default function WeconTable({ initialArea }: Props) {
 
   const [sortAsc, setSortAsc] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState<number | "all">(25);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [refreshingLatest, setRefreshingLatest] = useState(false);
@@ -288,8 +290,6 @@ export default function WeconTable({ initialArea }: Props) {
   const [detailedInsight, setDetailedInsight] =
     useState<DetailedInsightResponse | null>(null);
   const quickInsightCacheRef = useRef<Record<string, string>>({});
-
-  const rowsPerPage = 25;
 
   function hasValidSensorData(record: any): boolean {
     return SENSOR_KEYS.some((key) => {
@@ -1423,7 +1423,8 @@ export default function WeconTable({ initialArea }: Props) {
     aiDecision?.pollutionRiskLevel ||
     deriveRiskLevelFromClass(latestAssessment.className);
 
-  const totalPages = Math.ceil(sortedData.length / rowsPerPage);
+  const totalPages =
+    rowsPerPage === "all" ? 1 : Math.ceil(sortedData.length / rowsPerPage);
 
   const isDateRangeOverLimit = useMemo(() => {
     if (!start || !end) return false;
@@ -1443,10 +1444,19 @@ export default function WeconTable({ initialArea }: Props) {
     return rangeDays > MAX_VISUALIZATION_RANGE_DAYS;
   }, [start, end]);
 
-  const paginatedData = sortedData.slice(
-    (currentPage - 1) * rowsPerPage,
-    currentPage * rowsPerPage,
-  );
+  const paginatedData =
+    rowsPerPage === "all"
+      ? sortedData
+      : sortedData.slice(
+          (currentPage - 1) * rowsPerPage,
+          currentPage * rowsPerPage,
+        );
+
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const schema = useMemo(() => {
     if (!sortedData.length) return {};
@@ -2464,11 +2474,11 @@ export default function WeconTable({ initialArea }: Props) {
                 <div>
                   <h2 className="flex items-center gap-2 font-semibold text-gray-800">
                     <span>📊</span>
-                    <span>Supporting Data Visualization</span>
+                    <span>Historical Data Analysis</span>
                   </h2>
                   <p className="mt-1 text-sm text-gray-500">
-                    AI decision uses the last {AI_WINDOW_DAYS} days, graphs
-                    remain available for supporting interpretation
+                    Unified historical context with separate visualization and
+                    tabular review panels
                   </p>
                 </div>
 
@@ -2557,163 +2567,198 @@ export default function WeconTable({ initialArea }: Props) {
                 </p>
               )}
 
-              <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <SmallInfoPanel
-                  title="Trend Highlights"
-                  items={
-                    keyTrendItems.length > 0
-                      ? keyTrendItems.map(
-                          (item) =>
-                            `${item.label}: ${item.direction}, avg ${formatMetric(
-                              item.average,
-                              item.unit,
-                            )}, latest ${formatMetric(item.latest, item.unit)}, shift ${
-                              item.changePct !== null
-                                ? `${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(1)}%`
-                                : "insufficient trend data"
-                            }`,
-                        )
-                      : [
-                          "No significant trend shift detected in the selected chart range.",
-                        ]
-                  }
-                />
+              <div className="space-y-6">
+                <div className="rounded-2xl border bg-gray-50 p-5">
+                  <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <h3 className="font-semibold text-gray-800">
+                        Visualization
+                      </h3>
+                      <p className="mt-1 text-sm text-gray-500">
+                        AI decision uses the last {AI_WINDOW_DAYS} days, graphs
+                        remain available for supporting interpretation
+                      </p>
+                    </div>
 
-                <SmallInfoPanel
-                  title="Parameter Comparison"
-                  items={parameterComparisonItems}
-                />
-
-                <SmallInfoPanel
-                  title="Threshold Exceedance Indicators"
-                  items={
-                    exceedanceIndicators.length > 0
-                      ? exceedanceIndicators.map(
-                          (item) =>
-                            `${item.label}: ${item.exceedanceRate}% points exceed Class IV-V threshold (latest ${formatMetric(item.latest, item.unit)}).`,
-                        )
-                      : [
-                          "No Class IV-V threshold exceedance found in the selected chart range.",
-                        ]
-                  }
-                />
-              </div>
-
-              <div className="mb-4 flex justify-end">
-                <button
-                  onClick={() => setShowVisualization((prev) => !prev)}
-                  className="h-[38px] rounded-lg border px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
-                >
-                  {showVisualization
-                    ? "Hide Visualization"
-                    : "Show Visualization"}
-                </button>
-              </div>
-
-              {loadingHistorical && (
-                <div className="flex items-center justify-center py-10">
-                  <div className="flex items-center gap-3 text-sm text-gray-600">
-                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"></div>
-                    <span>Loading historical data...</span>
-                  </div>
-                </div>
-              )}
-
-              {showVisualization && (
-                <div className="rounded-2xl border bg-gray-50 p-6">
-                  <Visualizations
-                    rows={sortedData}
-                    schema={schema}
-                    rangeStart={start}
-                    rangeEnd={end}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="mx-auto w-full max-w-[1500px] px-4 lg:px-6">
-            <div className="rounded-2xl border bg-white p-6 shadow-sm">
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h2 className="font-semibold text-gray-800">
-                    Historical Data
-                  </h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Reference table for detailed review when needed
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => setShowHistoricalTable((prev) => !prev)}
-                  className="rounded-lg border px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
-                >
-                  {showHistoricalTable ? "Hide Table" : "Show Table"}
-                </button>
-              </div>
-
-              {showHistoricalTable && paginatedData.length > 0 && (
-                <>
-                  <div className="mb-6 text-center">
-                    <p className="mt-1 text-sm text-gray-500">
-                      {formatDisplayDate(start)} - {formatDisplayDate(end)}
-                    </p>
-                    <p className="mt-1 text-xs text-gray-400">
-                      Total Records: {sortedData.length}
-                    </p>
+                    <button
+                      onClick={() => setShowVisualization((prev) => !prev)}
+                      className="h-[38px] rounded-lg border bg-white px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-100"
+                    >
+                      {showVisualization
+                        ? "Hide Visualization"
+                        : "Show Visualization"}
+                    </button>
                   </div>
 
-                  <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-gray-100">
-                        <tr>
-                          <th
-                            className="cursor-pointer px-3 py-2 text-left"
-                            onClick={() => setSortAsc(!sortAsc)}
-                          >
-                            Timestamp {sortAsc ? "↑" : "↓"}
-                          </th>
+                  <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+                    <SmallInfoPanel
+                      title="Trend Highlights"
+                      items={
+                        keyTrendItems.length > 0
+                          ? keyTrendItems.map(
+                              (item) =>
+                                `${item.label}: ${item.direction}, avg ${formatMetric(
+                                  item.average,
+                                  item.unit,
+                                )}, latest ${formatMetric(item.latest, item.unit)}, shift ${
+                                  item.changePct !== null
+                                    ? `${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(1)}%`
+                                    : "insufficient trend data"
+                                }`,
+                            )
+                          : [
+                              "No significant trend shift detected in the selected chart range.",
+                            ]
+                      }
+                    />
 
-                          {SENSOR_KEYS.map((key) => (
-                            <th key={key} className="px-3 py-2 text-left">
-                              {SENSOR_META[key].shortLabel}
-                            </th>
+                    <SmallInfoPanel
+                      title="Parameter Comparison"
+                      items={parameterComparisonItems}
+                    />
+
+                    <SmallInfoPanel
+                      title="Threshold Exceedance Indicators"
+                      items={
+                        exceedanceIndicators.length > 0
+                          ? exceedanceIndicators.map(
+                              (item) =>
+                                `${item.label}: ${item.exceedanceRate}% points exceed Class IV-V threshold (latest ${formatMetric(item.latest, item.unit)}).`,
+                            )
+                          : [
+                              "No Class IV-V threshold exceedance found in the selected chart range.",
+                            ]
+                      }
+                    />
+                  </div>
+
+                  {loadingHistorical && (
+                    <div className="flex items-center justify-center py-10">
+                      <div className="flex items-center gap-3 text-sm text-gray-600">
+                        <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"></div>
+                        <span>Loading historical data...</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {showVisualization && (
+                    <div className="rounded-2xl border bg-white p-6">
+                      <Visualizations
+                        rows={sortedData}
+                        schema={schema}
+                        rangeStart={start}
+                        rangeEnd={end}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border bg-gray-50 p-5">
+                  <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <h3 className="font-semibold text-gray-800">Table</h3>
+                      <p className="mt-1 text-sm text-gray-500">
+                        Reference table for detailed review when needed
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-500">
+                          Show rows
+                        </label>
+                        <select
+                          value={rowsPerPage}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setRowsPerPage(
+                              value === "all" ? "all" : Number(value),
+                            );
+                            setCurrentPage(1);
+                          }}
+                          className="h-[38px] rounded-lg border bg-white px-3 text-sm text-gray-700"
+                        >
+                          {TABLE_ROWS_PER_PAGE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {option === "all" ? "All" : option}
+                            </option>
                           ))}
-                        </tr>
-                      </thead>
+                        </select>
+                      </div>
 
-                      <tbody>
-                        {paginatedData.map((row, i) => (
-                          <tr
-                            key={i}
-                            className="border-t transition hover:bg-gray-50"
-                          >
-                            <td className="px-3 py-2">
-                              {formatDisplayDateTime(row.Timestamp)}
-                            </td>
+                      <button
+                        onClick={() => setShowHistoricalTable((prev) => !prev)}
+                        className="rounded-lg border bg-white px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-100"
+                      >
+                        {showHistoricalTable ? "Hide Table" : "Show Table"}
+                      </button>
+                    </div>
+                  </div>
 
-                            {SENSOR_KEYS.map((key) => (
-                              <td key={key} className="px-3 py-2">
-                                {roundValue(row[key])}
-                              </td>
+                  {showHistoricalTable && paginatedData.length > 0 && (
+                    <>
+                      <div className="mb-6 text-center">
+                        <p className="mt-1 text-sm text-gray-500">
+                          {formatDisplayDate(start)} - {formatDisplayDate(end)}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400">
+                          Total Records: {sortedData.length}
+                        </p>
+                      </div>
+
+                      <div className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-gray-100">
+                            <tr>
+                              <th
+                                className="cursor-pointer px-3 py-2 text-left"
+                                onClick={() => setSortAsc(!sortAsc)}
+                              >
+                                Timestamp {sortAsc ? "↑" : "↓"}
+                              </th>
+
+                              {SENSOR_KEYS.map((key) => (
+                                <th key={key} className="px-3 py-2 text-left">
+                                  {SENSOR_META[key].shortLabel}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+
+                          <tbody>
+                            {paginatedData.map((row, i) => (
+                              <tr
+                                key={i}
+                                className="border-t transition hover:bg-gray-50"
+                              >
+                                <td className="px-3 py-2">
+                                  {formatDisplayDateTime(row.Timestamp)}
+                                </td>
+
+                                {SENSOR_KEYS.map((key) => (
+                                  <td key={key} className="px-3 py-2">
+                                    {roundValue(row[key])}
+                                  </td>
+                                ))}
+                              </tr>
                             ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                          </tbody>
+                        </table>
+                      </div>
 
-                  {renderPagination()}
-                </>
-              )}
+                      {renderPagination()}
+                    </>
+                  )}
 
-              {showHistoricalTable &&
-                paginatedData.length === 0 &&
-                !loadingHistorical && (
-                  <div className="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">
-                    No historical data available for the selected range.
-                  </div>
-                )}
+                  {showHistoricalTable &&
+                    paginatedData.length === 0 &&
+                    !loadingHistorical && (
+                      <div className="rounded-xl border border-dashed bg-white p-8 text-center text-sm text-gray-500">
+                        No historical data available for the selected range.
+                      </div>
+                    )}
+                </div>
+              </div>
             </div>
           </div>
         </div>
