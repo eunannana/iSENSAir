@@ -296,6 +296,35 @@ export default function WeconTable({ initialArea }: Props) {
     useState<DetailedInsightResponse | null>(null);
   const quickInsightCacheRef = useRef<Record<string, string>>({});
 
+  function getDailySampleCount(dataRows: RowData[]): number {
+    if (!dataRows || dataRows.length === 0) return 0;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    let selectedRows = dataRows.filter((row) => {
+      if (!row?.Timestamp) return false;
+      const rowTime = parseTimestamp(row.Timestamp);
+      const rowDate = new Date(rowTime);
+      rowDate.setHours(0, 0, 0, 0);
+      return rowDate.getTime() === today.getTime();
+    });
+
+    if (selectedRows.length === 0) {
+      selectedRows = dataRows.filter((row) => {
+        if (!row?.Timestamp) return false;
+        const rowTime = parseTimestamp(row.Timestamp);
+        const rowDate = new Date(rowTime);
+        rowDate.setHours(0, 0, 0, 0);
+        return rowDate.getTime() === yesterday.getTime();
+      });
+    }
+
+    return selectedRows.length;
+  }
+
   function hasValidSensorData(record: any): boolean {
     return SENSOR_KEYS.some((key) => {
       const val = record?.[key];
@@ -720,6 +749,7 @@ export default function WeconTable({ initialArea }: Props) {
       sortedDataParam: any[],
       aiInsightParam: any,
       assessmentParam: OverallAssessment,
+      dailySampleCountParam: number,
     ) => {
       if (!latestRowParam) return "";
 
@@ -817,6 +847,8 @@ export default function WeconTable({ initialArea }: Props) {
               dominantReason: assessmentParam.dominantReason,
               drivers: assessmentParam.drivers,
               lastUpdated: latestRowParam?.Timestamp,
+              aggregationType: "daily_average",
+              sampleCount: dailySampleCountParam,
             },
           }),
         });
@@ -1158,6 +1190,12 @@ export default function WeconTable({ initialArea }: Props) {
     );
   }, [data]);
 
+  const tableSourceData = useMemo(() => {
+    return [...data].sort(
+      (a, b) => parseTimestamp(b.Timestamp) - parseTimestamp(a.Timestamp),
+    );
+  }, [data]);
+
   const visualizationRows = useMemo(() => {
     return [...sortedData].sort(
       (a, b) => parseTimestamp(a.Timestamp) - parseTimestamp(b.Timestamp),
@@ -1165,7 +1203,7 @@ export default function WeconTable({ initialArea }: Props) {
   }, [sortedData]);
 
   const tableRows = useMemo(() => {
-    return [...sortedData].sort((a, b) => {
+    return [...tableSourceData].sort((a, b) => {
       const baseCompare = compareTableValues(a, b, tableSortKey);
       if (baseCompare === 0) {
         const timeCompare = parseTimestamp(a.Timestamp) - parseTimestamp(b.Timestamp);
@@ -1174,7 +1212,7 @@ export default function WeconTable({ initialArea }: Props) {
 
       return tableSortAsc ? baseCompare : -baseCompare;
     });
-  }, [sortedData, compareTableValues, tableSortKey, tableSortAsc]);
+  }, [tableSourceData, compareTableValues, tableSortKey, tableSortAsc]);
 
   const aiWindowRows = useMemo(() => {
     const filtered = [...aiHistoryRows].filter(hasValidSensorData);
@@ -1318,6 +1356,10 @@ export default function WeconTable({ initialArea }: Props) {
 
   const dailyData = useMemo(() => {
     return getDailyAggregatedData(sortedData);
+  }, [sortedData]);
+
+  const dailySampleCount = useMemo(() => {
+    return getDailySampleCount(sortedData);
   }, [sortedData]);
 
   const latestAssessment = useMemo(() => {
@@ -1560,6 +1602,7 @@ export default function WeconTable({ initialArea }: Props) {
         sortedData,
         aiInsight,
         dailyAssessment,
+        dailySampleCount,
       );
 
       if (cancelled) return;
@@ -1580,6 +1623,7 @@ export default function WeconTable({ initialArea }: Props) {
     sortedData,
     aiInsight,
     dailyAssessment,
+    dailySampleCount,
   ]);
 
   const handleExportPDF = () => {
@@ -2277,6 +2321,10 @@ export default function WeconTable({ initialArea }: Props) {
                                 )}
                             </p>
                           )}
+
+                          <p className="mt-3 text-xs text-gray-500">
+                            Insight values are based on daily averages from {dailySampleCount} records.
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -2908,7 +2956,7 @@ function buildQuickInsightFallback(
   const recommendation =
     aiInsight?.recommendations?.[0] || "Closer monitoring is recommended.";
 
-  return `The latest snapshot indicates a ${assessment.status.toLowerCase()} water quality condition at Class ${
+  return `Based on daily average readings, water quality is ${assessment.status.toLowerCase()} at Class ${
     assessment.className
   }, mainly influenced by ${drivers}. This suggests that the river is currently under elevated pollution stress and should be reviewed together with recent trend movement. ${recommendation}`;
 }

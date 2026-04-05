@@ -79,7 +79,12 @@ function buildQuickInsightFallback(aiInsight: any, nwqsSummary: any) {
       ? aiInsight.dominantParameters.join(", ")
       : "multiple parameters";
 
-  return `The latest snapshot indicates Class ${
+  const sampleCount = Number.isFinite(Number(nwqsSummary?.sampleCount))
+    ? Number(nwqsSummary.sampleCount)
+    : null;
+  const sampleText = sampleCount !== null ? ` from ${sampleCount} records` : "";
+
+  return `Based on daily average readings${sampleText}, Class ${
     nwqsSummary?.overallClass || "-"
   }, mainly influenced by ${dominant}. This suggests current pollution pressure that should be checked together with the recent short-term trend.`;
 }
@@ -304,6 +309,8 @@ Rules:
 - Maximum 2 sentences.
 - Mention the class if available.
 - Mention only the most important contributors.
+- The provided numeric values are daily averages, not single timestamp readings.
+- If you cite numbers, clearly state they are daily averages.
 - Do not be generic.
 - Do not use markdown.
 - Return JSON only:
